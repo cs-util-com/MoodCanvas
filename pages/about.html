@@ -1,119 +1,81 @@
-<!-- filepath: /workspaces/TemplateJs/src/pages/about.html -->
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>About - Template Web App</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23fff'/%3E%3C/svg%3E" type="image/svg+xml">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    @view-transition {
-      navigation: auto;
-    }
-    
-    nav a[aria-current="page"]:after {
-      border-color: white;
-      view-transition-name: posts-nav;
-    }
-    
-    /* Old stuff going out */
-    ::view-transition-old(posts-nav) {
-      animation: fade 0.2s linear forwards;
-      height: 100%;
-    }
-    
-    /* New stuff coming in */
-    ::view-transition-new(posts-nav) {
-      animation: fade 0.3s linear reverse;
-      height: 100%;
-    }
-    
-    @keyframes fade {
-      from { opacity: 1; }
-      to { opacity: 0; }
-    }
-  </style>
-  <script>
-    // Only use if browser supports View Transitions
-    if (document.startViewTransition) {
-      window.addEventListener('click', (e) => {
-        // Only handle internal links
-        if (e.target.tagName === 'A' && e.target.origin === window.location.origin) {
-          e.preventDefault();
-          document.startViewTransition(() => {
-            window.location.href = e.target.href;
-          });
-        }
-      });
-    }
-  </script>
-</head>
-<body class="font-mono p-8 bg-gray-50">
-  <div class="max-w-4xl mx-auto">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold text-blue-600 mb-4 site-title">Template Web App</h1>
-      <nav class="bg-blue-600 text-white p-4 rounded-lg mb-4 main-nav">
-        <ul class="flex space-x-6">
-          <li><a href="index.html" class="hover:underline nav-item relative">Home</a></li>
-          <li><a href="features.html" class="hover:underline nav-item relative">Features</a></li>
-          <li><a href="about.html" class="hover:underline nav-item relative" aria-current="page">
-            About
-            <span class="absolute bottom-0 left-0 w-full h-0.5 bg-white"></span>
-          </a></li>
-        </ul>
-      </nav>
-      <div class="bg-blue-100 border-l-4 border-blue-500 p-4 mb-6">
-        <p class="text-sm text-blue-700">Learn more about this web application template.</p>
-      </div>
-    </header>
-    
-    <div class="bg-white p-6 rounded-lg shadow-md mb-8 about-section">
-      <h2 class="text-2xl font-bold mb-4 text-blue-600">About This Template</h2>
-      <p class="text-gray-600 mb-4">
-        This is a demonstration of a modern web application template built with:
-      </p>
-      
-      <div class="mb-6">
-        <h3 class="text-lg font-bold text-gray-800 mb-2">Technology Stack</h3>
-        <ul class="list-disc pl-5 space-y-1 text-gray-600">
-          <li>HTML5 for structure</li>
-          <li>Tailwind CSS for styling</li>
-          <li>ES Modules for JavaScript organization</li>
-          <li>Local Storage for data persistence</li>
-        </ul>
-      </div>
-      
-      <div class="mb-6">
-        <h3 class="text-lg font-bold text-gray-800 mb-2">Design Principles</h3>
-        <ul class="list-disc pl-5 space-y-1 text-gray-600">
-          <li>Responsive design that works on all device sizes</li>
-          <li>Clean, accessible user interface</li>
-          <li>Modular code structure for maintainability</li>
-          <li>No backend dependencies - runs entirely in the browser</li>
-        </ul>
-      </div>
-      
-      <div class="bg-gray-100 p-4 rounded-lg mb-4">
-        <p class="text-gray-700 italic">
-          "This template demonstrates how to build a modern web application without complex frameworks or build tools."
-        </p>
-      </div>
-      
-      <p class="text-gray-600">
-        Feel free to use this template as a starting point for your own projects.
-      </p>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About · MoodCanvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              plum: '#392338',
+              'plum-surface': '#3F2840',
+              'plum-surface-2': '#462E49',
+              'plum-border': '#513354',
+              peach: '#FFCFA4',
+              raspberry: '#C1264E',
+            },
+            borderRadius: {
+              xl2: '1.5rem',
+            },
+            fontFamily: {
+              sans: ['"Inter"', 'system-ui', 'sans-serif'],
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="h-full bg-plum text-peach font-sans">
+    <div class="min-h-full">
+      <header class="border-b border-plum-border/50 bg-plum-surface">
+        <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8">
+          <a href="../index.html" class="text-xs uppercase tracking-[0.3em] text-peach/80">MoodCanvas</a>
+          <h1 class="text-3xl font-semibold text-white">About the project</h1>
+          <p class="text-sm text-peach/80 max-w-2xl">
+            MoodCanvas is a privacy-forward, client-only interior design assistant. It turns a single empty-room photo into guided inspiration, AI renders, and actionable follow-up steps—all without leaving the browser.
+          </p>
+        </div>
+      </header>
+      <main class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-10">
+        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+          <h2 class="text-xl font-semibold text-white">Why client-only?</h2>
+          <p class="mt-3 text-sm text-peach/80">
+            Users bring their own Gemini API key (BYOK) and every asset—from the room photo to AI renders—stays in the browser. IndexedDB stores the working project so the session remains private and responsive.
+          </p>
+        </section>
+        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+          <h2 class="text-xl font-semibold text-white">Design language</h2>
+          <ul class="mt-4 space-y-3 text-sm text-peach/80">
+            <li><span class="text-white font-medium">Plum–Peach dark palette</span> keeps focus on photography and accent cues.</li>
+            <li><span class="text-white font-medium">Chat-style timeline</span> mirrors a guided consultation—every edit rewinds dependent steps.</li>
+            <li><span class="text-white font-medium">System sans typography</span> for a calm, readable rhythm.</li>
+          </ul>
+        </section>
+        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+          <h2 class="text-xl font-semibold text-white">Core capabilities</h2>
+          <div class="mt-4 grid gap-4 md:grid-cols-2">
+            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+              <h3 class="text-white font-semibold">Room analysis</h3>
+              <p class="mt-2">Strict JSON schema ensures every Gemini response includes palette, constraints, and top-ten styles.</p>
+            </article>
+            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+              <h3 class="text-white font-semibold">Render pipeline</h3>
+              <p class="mt-2">Gallery, A/B variants, and hero renders run with pooled concurrency for smooth progress.</p>
+            </article>
+            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+              <h3 class="text-white font-semibold">Actionable follow-up</h3>
+              <p class="mt-2">Quick wins, Smart Mixed palette, and a neutral mini shopping list conclude every session.</p>
+            </article>
+            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+              <h3 class="text-white font-semibold">Local persistence</h3>
+              <p class="mt-2">IndexedDB keeps projects capped at 150&nbsp;MB each, with automatic cleanup of older renders.</p>
+            </article>
+          </div>
+        </section>
+      </main>
     </div>
-    
-    <div class="bg-white p-6 rounded-lg shadow-md">
-      <h2 class="text-xl font-bold mb-4 text-gray-800">Contact Information</h2>
-      <p class="text-gray-600 mb-4">
-        If you have any questions or feedback about this template, please reach out:
-      </p>
-      <div class="flex items-center space-x-2">
-        <a href="https://github.com/cs-util/TemplateJs">github.com/cs-util/TemplateJs</a>
-      </div>
-    </div>
-  </div>
-</body>
+  </body>
 </html>

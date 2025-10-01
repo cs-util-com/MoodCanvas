@@ -1,7 +1,7 @@
 {
-  "name": "templatejs",
-  "version": "1.0.0",
-  "description": "TemplateJs is a minimal single-page web app template designed for quick deployment.  It follows an AI-assisted iterative development process:",
+  "name": "moodcanvas",
+  "version": "0.1.0",
+  "description": "MoodCanvas is a client-only interior design assistant that guides users from a single room photo to AI-generated style renders, quick wins, and a curated mini shopping list.",
   "main": "index.js",
   "scripts": {
     "test": "jest --coverage --config config/jest.config.js",
