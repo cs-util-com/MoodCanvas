@@ -39,8 +39,12 @@ A user uploads **one photo** (JPG/PNG, camera capture supported) of an **empty o
 * **Models**: `gemini-2.5-flash` for **analysis**; `gemini-2.5-flash-image` for **renders**. Balanced cost/latency.
 * **Strict JSON** mode for analysis: `responseMimeType:"application/json"` + `responseSchema` → stable, machine-consumable output.
 * **Storage**: **IndexedDB** via tiny `idb` lib; **Hybrid model** (projects, events, media, artifacts). Local only.
-* **Styling**: Tailwind **Play CDN** (no build); **Plum–Peach** dark palette; system sans.
+* **Styling**: Tailwind compiled locally (CLI) into static CSS; **Plum–Peach** dark palette; system sans.
 * **Hosting**: **GitHub Pages**; **CSP meta** (loose MVP) embedded in `index.html`.
+
+## Build step: Tailwind CSS
+
+Run `npm run build:css` after editing HTML/JS classes to regenerate `styles/app.css`.
 
 # Security & privacy
 
@@ -60,12 +64,12 @@ A user uploads **one photo** (JPG/PNG, camera capture supported) of an **empty o
 * **CSP (loose MVP)**:
 
   ```
-  default-src 'self';
-  img-src 'self' blob: data:;
-  connect-src https://generativelanguage.googleapis.com;
-  script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline';
-  style-src 'self' 'unsafe-inline';
-  object-src 'none'; frame-ancestors 'none'; base-uri 'self';
+   default-src 'self';
+   img-src 'self' blob: data:;
+   connect-src https://generativelanguage.googleapis.com;
+   script-src 'self';
+   style-src 'self';
+   object-src 'none'; base-uri 'self';
   ```
 
 # Data model (IndexedDB – Hybrid)
@@ -186,8 +190,9 @@ Use the version shared earlier (“ROLE: Interior design analyst for empty rooms
 The approved **ANALYSIS_SCHEMA** (JSON Schema 2020-12) is part of the app and sent to Gemini in `responseSchema`.
 
 * Required sections: `usage_candidates`, `photo_findings`, `palette_60_30_10`, `constraints`, `quick_wins`, `styles_top10`, `smart_mixed_axes`, `negative_prompts`, `safety_checks`, `render_gallery`.
-* Exact enumerations & lengths enforced (e.g., `styles_top10` length **10**, `render_gallery` length **10**).
-* `scale_guesses` allows `null` for width/depth/height with explicit `confidence`.
+* Enumerations and exact counts are now handled at the prompt/UX level (schema only asserts basic shapes) to avoid overwhelming Gemini with state explosion.
+* Numeric ranges and string patterns (confidence 0-1, hex codes, etc.) are enforced via prompt instructions and client-side validation instead of schema constraints.
+* `scale_guesses` allows `null` for width/depth/height with explicit `confidence` via `nullable: true` on numeric fields (no range bounds in-schema).
 
 # UI & styling
 

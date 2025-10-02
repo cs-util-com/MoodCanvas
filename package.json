@@ -1,7 +1,7 @@
 {
-  "name": "templatejs",
-  "version": "1.0.0",
-  "description": "TemplateJs is a minimal single-page web app template designed for quick deployment.  It follows an AI-assisted iterative development process:",
+  "name": "moodcanvas",
+  "version": "0.1.0",
+  "description": "MoodCanvas is a client-only interior design assistant that guides users from a single room photo to AI-generated style renders, quick wins, and a curated mini shopping list.",
   "main": "index.js",
   "scripts": {
     "test": "jest --coverage --config config/jest.config.js",
@@ -11,6 +11,7 @@
     "check:dup": "jscpd --config config/.jscpd.json src",
     "check:cycles": "madge --circular --extensions js src",
     "check:boundaries": "depcruise -c config/.dependency-cruiser.js src",
+    "build:css": "tailwindcss -i ./src/tailwind.input.pcss -o ./styles/app.css --minify",
     "check:all": "npm run lint && npm run check:dup && npm run check:cycles && npm run check:boundaries",
     "validate:all": "npm run test && npm run check:all && npm run mutation"
   },
@@ -32,6 +33,7 @@
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^30.0.5",
     "jscpd": "^4.0.5",
-    "madge": "^8.0.0"
+    "madge": "^8.0.0",
+    "tailwindcss": "^3.4.14"
   }
 }
