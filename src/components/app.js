@@ -6,7 +6,7 @@ import {
   onKeyChange,
 } from '../utils/key-store.js';
 import { GeminiClient } from '../utils/gemini-client.js';
-import { normalizeImageFile, blobToBase64, blobToDataUrl } from '../utils/image.js';
+import { normalizeImageFile, blobToBase64, blobToDataUrl, base64ToBlob } from '../utils/image.js';
 import {
   ensureProject,
   getProject,
@@ -760,7 +760,7 @@ export class MoodCanvasApp {
       prompt,
       imageBase64: this.state.photo.base64,
     });
-    const blob = await fetch(`data:${result.mimeType};base64,${result.data}`).then((res) => res.blob());
+    const blob = base64ToBlob(result.data, result.mimeType);
     const thumb = await createThumb(blob);
     await this.persistRenderAssets({ blob, thumb, relatedId });
     return {

@@ -86,3 +86,20 @@ export async function blobToBase64(blob) {
   const dataUrl = await blobToDataUrl(blob);
   return dataUrl.split(',')[1];
 }
+
+export function base64ToBlob(base64, mimeType = 'application/octet-stream') {
+  if (typeof base64 !== 'string') {
+    throw new TypeError('Expected base64 string');
+  }
+  if (base64.length === 0) {
+    return new Blob([], { type: mimeType });
+  }
+
+  const binary = atob(base64);
+  const length = binary.length;
+  const bytes = new Uint8Array(length);
+  for (let index = 0; index < length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
