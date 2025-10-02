@@ -5,6 +5,9 @@ const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta';
 const ANALYSIS_MODEL = 'models/gemini-2.5-flash:generateContent';
 const RENDER_MODEL = 'models/gemini-2.5-flash-image:generateContent';
 
+export const DEFAULT_ANALYSIS_TIMEOUT_MS = 120_000;
+export const DEFAULT_RENDER_TIMEOUT_MS = 180_000;
+
 export class GeminiClient {
   constructor({ apiKey = '', fetchImpl = fetch } = {}) {
     this.apiKey = apiKey;
@@ -19,7 +22,7 @@ export class GeminiClient {
     imageBase64,
     prompt,
     signal,
-    timeoutMs = 45_000,
+    timeoutMs = DEFAULT_ANALYSIS_TIMEOUT_MS,
     schema = ANALYSIS_SCHEMA,
   }) {
     if (!imageBase64) {
@@ -61,7 +64,7 @@ export class GeminiClient {
     imageBase64,
     count = 1,
     signal,
-    timeoutMs = 120_000,
+    timeoutMs = DEFAULT_RENDER_TIMEOUT_MS,
   }) {
     if (!imageBase64) {
       throw new Error('imageBase64 is required for renders');
@@ -152,31 +155,31 @@ function mergeAbortSignals(a, b) {
   return controller.signal;
 }
 
-  async function safeJson(response) {
-    try {
-      return await response.json();
-    } catch {
-      return { error: response.statusText };
-    }
+async function safeJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return { error: response.statusText };
   }
+}
 
-  function parseAnalysisPayload(json) {
-    const candidate = json.candidates?.[0];
-    if (!candidate) {
-      throw buildGeminiError(json, 'No analysis candidate returned');
-    }
-    const part = candidate.content?.parts?.[0];
-    if (!part) {
-      throw buildGeminiError(json, 'No analysis content returned');
-    }
-    if (part.text) {
-      return JSON.parse(part.text);
-    }
-    if (part.jsonValue) {
-      return part.jsonValue;
-    }
-    throw buildGeminiError(json, 'Unsupported analysis payload shape');
+function parseAnalysisPayload(json) {
+  const candidate = json.candidates?.[0];
+  if (!candidate) {
+    throw buildGeminiError(json, 'No analysis candidate returned');
   }
+  const part = candidate.content?.parts?.[0];
+  if (!part) {
+    throw buildGeminiError(json, 'No analysis content returned');
+  }
+  if (part.text) {
+    return JSON.parse(part.text);
+  }
+  if (part.jsonValue) {
+    return part.jsonValue;
+  }
+  throw buildGeminiError(json, 'Unsupported analysis payload shape');
+}
 
 function buildGeminiError(payload, message, status) {
   const error = new Error(message);

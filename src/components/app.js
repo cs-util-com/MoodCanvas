@@ -307,7 +307,7 @@ export class MoodCanvasApp {
     card.innerHTML = `
       <h2 class="text-lg font-semibold">3. Analysis progress</h2>
       <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
-      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (45s timeout)</div>' : ''}
+      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (120s timeout)</div>' : ''}
       ${this.state.error && !this.state.analysis ? `<p class="text-sm text-raspberry">${this.state.error}</p>` : ''}
     `;
     return card;
