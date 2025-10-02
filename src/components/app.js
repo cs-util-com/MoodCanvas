@@ -98,7 +98,7 @@ export class MoodCanvasApp {
             <input id="keyInput" name="geminiKey" type="password" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="AIza..." />
           </label>
           <div class="flex flex-col gap-3 text-xs text-plum-muted">
-            <p>Bring your own key from <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" class="text-peach underline">Google AI Studio</a>. Keys are stored only in this browser.</p>
+            <p>Bring your own key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="text-peach underline">Google AI Studio</a>. Keys are stored only in this browser.</p>
             <button type="button" id="clearKeyBtn" class="self-start rounded-full border border-raspberry/50 px-3 py-1 text-raspberry hover:bg-raspberry/10">Remove key from this device</button>
           </div>
           <div class="flex justify-end gap-3">
@@ -245,7 +245,7 @@ export class MoodCanvasApp {
     banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
     banner.innerHTML = `
       <div class="font-medium">Bring your own Google Gemini key</div>
-      <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
+  <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
       <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
     `;
     banner.querySelector('#openSettings').addEventListener('click', () => this.settingsModal.showModal());
