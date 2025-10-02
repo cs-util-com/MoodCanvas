@@ -49,11 +49,9 @@ export const ANALYSIS_SCHEMA = {
       minItems: 3,
       items: {
         type: 'object',
-        required: ['function', 'confidence', 'why'],
         properties: {
           function: {
             type: 'string',
-            enum: SUPPORTED_ROOM_FUNCTIONS,
           },
           confidence: { type: 'number' },
           why: { type: 'string', minLength: 1 },
@@ -62,7 +60,6 @@ export const ANALYSIS_SCHEMA = {
     },
     photo_findings: {
       type: 'object',
-      required: ['envelope', 'lighting', 'architectural_features', 'warnings'],
       properties: {
         envelope: { type: 'string' },
         lighting: { type: 'string' },
@@ -75,7 +72,6 @@ export const ANALYSIS_SCHEMA = {
     },
     palette_60_30_10: {
       type: 'object',
-      required: ['primary', 'secondary', 'accent'],
       properties: {
         primary: paletteColorSchema(),
         secondary: paletteColorSchema(),
@@ -84,11 +80,9 @@ export const ANALYSIS_SCHEMA = {
     },
     constraints: {
       type: 'object',
-      required: ['scale_guesses', 'limitations', 'notes'],
       properties: {
         scale_guesses: {
           type: 'object',
-          required: ['width_m', 'depth_m', 'height_m'],
           properties: {
             width_m: scaleGuessSchema(),
             depth_m: scaleGuessSchema(),
@@ -104,17 +98,14 @@ export const ANALYSIS_SCHEMA = {
     },
     quick_wins: {
       type: 'array',
-      minItems: 5,
       items: quickWinSchema(),
     },
     styles_top10: {
       type: 'array',
-      minItems: 10,
       items: styleScoreSchema(),
     },
     smart_mixed_axes: {
       type: 'object',
-      required: ['axisA', 'axisB', 'summary'],
       properties: {
         axisA: smartAxisSchema(),
         axisB: smartAxisSchema(),
@@ -128,7 +119,6 @@ export const ANALYSIS_SCHEMA = {
     },
     safety_checks: {
       type: 'object',
-      required: ['nsfw', 'copyright', 'architectural_integrity'],
       properties: {
         nsfw: safetyFlagSchema(),
         copyright: safetyFlagSchema(),
@@ -137,7 +127,6 @@ export const ANALYSIS_SCHEMA = {
     },
     render_gallery: {
       type: 'array',
-      minItems: 10,
       items: renderPromptSchema(),
     },
   },
@@ -173,7 +162,6 @@ function scaleGuessSchema() {
 function quickWinSchema() {
   return {
     type: 'object',
-    required: ['title', 'description', 'effort', 'impact'],
     properties: {
       title: { type: 'string' },
       description: { type: 'string' },
@@ -186,9 +174,8 @@ function quickWinSchema() {
 function styleScoreSchema() {
   return {
     type: 'object',
-    required: ['style', 'score', 'why'],
     properties: {
-      style: { type: 'string', enum: SUPPORTED_STYLES },
+      style: { type: 'string' },
       score: { type: 'number' },
       why: { type: 'string' },
     },
@@ -198,16 +185,13 @@ function styleScoreSchema() {
 function smartAxisSchema() {
   return {
     type: 'object',
-    required: ['label', 'description', 'spectrum'],
     properties: {
       label: { type: 'string' },
       description: { type: 'string' },
       spectrum: {
         type: 'array',
-        minItems: 2,
         items: {
           type: 'object',
-          required: ['position', 'descriptor'],
           properties: {
             position: { type: 'number' },
             descriptor: { type: 'string' },
@@ -221,7 +205,6 @@ function smartAxisSchema() {
 function safetyFlagSchema() {
   return {
     type: 'object',
-    required: ['status', 'notes'],
     properties: {
       status: { type: 'string', enum: ['ok', 'warn', 'block'] },
       notes: { type: 'string' },
@@ -232,9 +215,8 @@ function safetyFlagSchema() {
 function renderPromptSchema() {
   return {
     type: 'object',
-    required: ['style', 'prompt', 'focus', 'guidance'],
     properties: {
-      style: { type: 'string', enum: SUPPORTED_STYLES },
+      style: { type: 'string' },
       prompt: { type: 'string' },
       focus: { type: 'string' },
       guidance: { type: 'string' },
