@@ -39,8 +39,12 @@ A user uploads **one photo** (JPG/PNG, camera capture supported) of an **empty o
 * **Models**: `gemini-2.5-flash` for **analysis**; `gemini-2.5-flash-image` for **renders**. Balanced cost/latency.
 * **Strict JSON** mode for analysis: `responseMimeType:"application/json"` + `responseSchema` → stable, machine-consumable output.
 * **Storage**: **IndexedDB** via tiny `idb` lib; **Hybrid model** (projects, events, media, artifacts). Local only.
-* **Styling**: Tailwind **Play CDN** (no build); **Plum–Peach** dark palette; system sans.
+* **Styling**: Tailwind compiled locally (CLI) into static CSS; **Plum–Peach** dark palette; system sans.
 * **Hosting**: **GitHub Pages**; **CSP meta** (loose MVP) embedded in `index.html`.
+
+## Build step: Tailwind CSS
+
+Run `npm run build:css` after editing HTML/JS classes to regenerate `styles/app.css`.
 
 # Security & privacy
 
@@ -60,12 +64,12 @@ A user uploads **one photo** (JPG/PNG, camera capture supported) of an **empty o
 * **CSP (loose MVP)**:
 
   ```
-  default-src 'self';
-  img-src 'self' blob: data:;
-  connect-src https://generativelanguage.googleapis.com;
-  script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline';
-  style-src 'self' 'unsafe-inline';
-  object-src 'none'; frame-ancestors 'none'; base-uri 'self';
+   default-src 'self';
+   img-src 'self' blob: data:;
+   connect-src https://generativelanguage.googleapis.com;
+   script-src 'self';
+   style-src 'self';
+   object-src 'none'; base-uri 'self';
   ```
 
 # Data model (IndexedDB – Hybrid)
