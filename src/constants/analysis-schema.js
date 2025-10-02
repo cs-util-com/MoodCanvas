@@ -30,10 +30,7 @@ export const SUPPORTED_STYLES = [
 ];
 
 export const ANALYSIS_SCHEMA = {
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
-  $id: 'https://moodcanvas.app/schemas/analysis.json',
   type: 'object',
-  additionalProperties: false,
   required: [
     'usage_candidates',
     'photo_findings',
@@ -53,7 +50,6 @@ export const ANALYSIS_SCHEMA = {
       maxItems: 6,
       items: {
         type: 'object',
-        additionalProperties: false,
         required: ['function', 'confidence', 'why'],
         properties: {
           function: {
@@ -67,18 +63,19 @@ export const ANALYSIS_SCHEMA = {
     },
     photo_findings: {
       type: 'object',
-      additionalProperties: false,
       required: ['envelope', 'lighting', 'architectural_features', 'warnings'],
       properties: {
         envelope: { type: 'string' },
         lighting: { type: 'string' },
         architectural_features: { type: 'string' },
-        warnings: { type: 'array', items: { type: 'string' } },
+        warnings: {
+          type: 'array',
+          items: { type: 'string' },
+        },
       },
     },
     palette_60_30_10: {
       type: 'object',
-      additionalProperties: false,
       required: ['primary', 'secondary', 'accent'],
       properties: {
         primary: paletteColorSchema(),
@@ -88,12 +85,10 @@ export const ANALYSIS_SCHEMA = {
     },
     constraints: {
       type: 'object',
-      additionalProperties: false,
       required: ['scale_guesses', 'limitations', 'notes'],
       properties: {
         scale_guesses: {
           type: 'object',
-          additionalProperties: false,
           required: ['width_m', 'depth_m', 'height_m'],
           properties: {
             width_m: scaleGuessSchema(),
@@ -101,7 +96,10 @@ export const ANALYSIS_SCHEMA = {
             height_m: scaleGuessSchema(),
           },
         },
-        limitations: { type: 'array', items: { type: 'string' } },
+        limitations: {
+          type: 'array',
+          items: { type: 'string' },
+        },
         notes: { type: 'string' },
       },
     },
@@ -119,7 +117,6 @@ export const ANALYSIS_SCHEMA = {
     },
     smart_mixed_axes: {
       type: 'object',
-      additionalProperties: false,
       required: ['axisA', 'axisB', 'summary'],
       properties: {
         axisA: smartAxisSchema(),
@@ -134,7 +131,6 @@ export const ANALYSIS_SCHEMA = {
     },
     safety_checks: {
       type: 'object',
-      additionalProperties: false,
       required: ['nsfw', 'copyright', 'architectural_integrity'],
       properties: {
         nsfw: safetyFlagSchema(),
@@ -154,7 +150,6 @@ export const ANALYSIS_SCHEMA = {
 function paletteColorSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['name', 'hex', 'finish', 'usage'],
     properties: {
       name: { type: 'string' },
@@ -171,14 +166,12 @@ function paletteColorSchema() {
 function scaleGuessSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['value', 'confidence'],
     properties: {
       value: {
-        anyOf: [
-          { type: 'number', minimum: 0 },
-          { type: 'null' },
-        ],
+        type: 'number',
+        minimum: 0,
+        nullable: true,
       },
       confidence: { type: 'number', minimum: 0, maximum: 1 },
     },
@@ -188,7 +181,6 @@ function scaleGuessSchema() {
 function quickWinSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['title', 'description', 'effort', 'impact'],
     properties: {
       title: { type: 'string' },
@@ -202,7 +194,6 @@ function quickWinSchema() {
 function styleScoreSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['style', 'score', 'why'],
     properties: {
       style: { type: 'string', enum: SUPPORTED_STYLES },
@@ -215,7 +206,6 @@ function styleScoreSchema() {
 function smartAxisSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['label', 'description', 'spectrum'],
     properties: {
       label: { type: 'string' },
@@ -225,7 +215,6 @@ function smartAxisSchema() {
         minItems: 2,
         items: {
           type: 'object',
-          additionalProperties: false,
           required: ['position', 'descriptor'],
           properties: {
             position: { type: 'number', minimum: 0, maximum: 1 },
@@ -240,7 +229,6 @@ function smartAxisSchema() {
 function safetyFlagSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['status', 'notes'],
     properties: {
       status: { type: 'string', enum: ['ok', 'warn', 'block'] },
@@ -252,7 +240,6 @@ function safetyFlagSchema() {
 function renderPromptSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     required: ['style', 'prompt', 'focus', 'guidance'],
     properties: {
       style: { type: 'string', enum: SUPPORTED_STYLES },
