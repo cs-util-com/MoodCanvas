@@ -236,6 +236,32 @@ describe('normalizeRenderGallery', () => {
     expect(normalized.some((item) => item.style === extraStyle)).toBe(true);
   });
 
+  test('uses palette override when provided', () => {
+    const analysis = {
+      render_gallery: [],
+      styles_top10: [
+        { style: 'Scandi', why: 'Calm minimalism' },
+      ],
+      palette_60_30_10: {
+        primary: { name: 'Base Primary', hex: '#101010' },
+        secondary: { name: 'Base Secondary', hex: '#222222' },
+        accent: { name: 'Base Accent', hex: '#333333' },
+      },
+      negative_prompts: [],
+      photo_findings: {},
+    };
+    const override = {
+      primary: { name: 'Override Primary', hex: '#445566' },
+      secondary: { name: 'Override Secondary', hex: '#778899' },
+      accent: { name: 'Override Accent', hex: '#AABBCC' },
+    };
+
+    const normalized = normalizeRenderGallery(analysis, override);
+    const scandi = normalized.find((item) => item.style === 'Scandi');
+    expect(scandi.prompt).toContain('#445566');
+    expect(scandi.prompt).toContain('#778899');
+  });
+
   test('returns empty array when analysis missing', () => {
     expect(normalizeRenderGallery(null)).toEqual([]);
   });

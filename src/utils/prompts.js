@@ -46,7 +46,7 @@ export function buildMiniList(analysis) {
   return [...quickWins, ...staples].slice(0, 5);
 }
 
-export function normalizeRenderGallery(analysis) {
+export function normalizeRenderGallery(analysis, paletteOverride) {
   if (!analysis) return [];
 
   const existing = Array.isArray(analysis.render_gallery)
@@ -56,7 +56,7 @@ export function normalizeRenderGallery(analysis) {
     ? analysis.styles_top10.filter((item) => item && typeof item.style === 'string')
     : [];
 
-  const palette = analysis.palette_60_30_10;
+  const palette = paletteOverride ?? analysis.palette_60_30_10;
   const limitations = Array.isArray(analysis.constraints?.limitations)
     ? analysis.constraints.limitations.filter(Boolean)
     : [];

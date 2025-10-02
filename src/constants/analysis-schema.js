@@ -78,6 +78,19 @@ export const ANALYSIS_SCHEMA = {
         accent: paletteColorSchema(),
       },
     },
+    palette_options: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['primary', 'secondary', 'accent'],
+        properties: {
+          primary: paletteColorSchema(),
+          secondary: paletteColorSchema(),
+          accent: paletteColorSchema(),
+        },
+      },
+    },
     constraints: {
       type: 'object',
       properties: {

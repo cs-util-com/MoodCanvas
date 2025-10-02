@@ -43,6 +43,8 @@ export class MoodCanvasApp {
       quickWins: null,
       miniList: null,
       palette: null,
+      paletteOptions: [],
+      selectedPaletteIndex: null,
       warning: null,
       error: null,
     };
@@ -192,7 +194,9 @@ export class MoodCanvasApp {
     }
     if (this.state.analysis) {
       this.timelineEl.appendChild(this.renderAnalysisResults());
-      this.timelineEl.appendChild(this.renderGalleryCard());
+      if (this.state.palette) {
+        this.timelineEl.appendChild(this.renderGalleryCard());
+      }
     }
     if (this.state.abVariants.length > 0) {
       this.timelineEl.appendChild(this.renderABCard());
@@ -316,12 +320,18 @@ export class MoodCanvasApp {
 
   renderAnalysisResults() {
     const { analysis } = this.state;
+    const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
     const card = document.createElement('section');
     card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
+
+    const paletteStatus = this.state.palette
+      ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
+      : '<span class="rounded-full bg-plum-border/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Awaiting pick</span>';
+
     card.innerHTML = `
       <div class="flex flex-col gap-1">
         <h2 class="text-lg font-semibold">4. Room intelligence</h2>
-        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette, and quick wins.</p>
+        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette exploration, and quick wins.</p>
       </div>
       <div class="grid gap-6 md:grid-cols-2">
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
@@ -330,38 +340,109 @@ export class MoodCanvasApp {
             ${analysis.usage_candidates.slice(0, 3).map((item) => `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`).join('')}
           </div>
         </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
-          <div class="grid grid-cols-3 gap-3">
-            ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, analysis.palette_60_30_10[key])).join('')}
+        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
+              <p class="text-xs text-plum-muted mt-1">Pick one of the suggested palettes to continue.</p>
+            </div>
+            ${paletteStatus}
           </div>
+          <div class="grid gap-3 sm:grid-cols-2" id="paletteGrid"></div>
+          ${!this.state.palette ? '<p class="text-xs text-peach/80">Select a palette to unlock the 10-style gallery.</p>' : ''}
         </section>
       </div>
       <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
         <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
         <ol class="space-y-3 text-sm text-plum-muted">
-          ${analysis.quick_wins.map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description} (<span class="text-peach">Impact:</span> ${win.impact})</li>`).join('')}
+          ${(analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
         </ol>
       </section>
     `;
+
+    const paletteGrid = card.querySelector('#paletteGrid');
+    if (paletteGrid) {
+      if (paletteOptions.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'text-xs text-plum-muted';
+        empty.textContent = 'No palette suggestions available. You can still proceed once a palette is selected later.';
+        paletteGrid.appendChild(empty);
+      } else {
+        paletteOptions.forEach((option, index) => {
+          paletteGrid.appendChild(this.renderPaletteOption(option, index));
+        });
+      }
+    }
+
     return card;
   }
 
-  renderPaletteSwatch(label, info) {
+  renderPaletteSwatch(label, info = {}) {
+    const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
+    const name = typeof info.name === 'string' && info.name.trim().length > 0 ? info.name : '—';
+    const finish = typeof info.finish === 'string' ? info.finish : '';
     return `
       <div class="flex flex-col gap-2 text-xs text-center">
         <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
           <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
-            <rect width="100" height="100" fill="${info.hex}" />
+            <rect width="100" height="100" fill="${hex}" />
           </svg>
         </div>
         <div class="flex flex-col">
           <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
-          <span>${info.name}</span>
-          <span>${info.hex}</span>
+          <span>${name}</span>
+          <span>${hex}</span>
+          ${finish ? `<span>${finish}</span>` : ''}
         </div>
       </div>
     `;
+  }
+
+  renderPaletteOption(palette, index) {
+    const isSelected = this.state.selectedPaletteIndex === index;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
+      isSelected ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20' : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
+    }`;
+
+    const statusBadge = isSelected
+      ? '<span class="rounded-full bg-peach/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/90">Selected</span>'
+      : index === 0
+        ? '<span class="rounded-full bg-plum-border/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Recommended</span>'
+        : '';
+
+    button.innerHTML = `
+      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-plum-muted">
+        <span>Palette ${index + 1}</span>
+        ${statusBadge}
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, palette?.[key] ?? {})).join('')}
+      </div>
+    `;
+
+    button.addEventListener('click', () => this.selectPalette(index));
+    return button;
+  }
+
+  selectPalette(index) {
+    const options = this.state.paletteOptions ?? [];
+    const palette = options[index];
+    if (!palette) {
+      return;
+    }
+    this.state.selectedPaletteIndex = index;
+    this.state.palette = palette;
+    if (this.state.analysis) {
+      const updatedAnalysis = {
+        ...this.state.analysis,
+        palette_60_30_10: palette,
+      };
+      updatedAnalysis.render_gallery = normalizeRenderGallery(updatedAnalysis, palette);
+      this.state.analysis = updatedAnalysis;
+    }
+    this.render();
   }
 
   renderGalleryCard() {
@@ -505,8 +586,8 @@ export class MoodCanvasApp {
         </section>
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
           <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
-          <ul class="space-y-3 text-sm text-plum-muted">
-            ${list.map((item) => `<li><span class="text-plum-text font-medium">${item.name}</span> · ${item.spec}</li>`).join('')}
+          <ol class="space-y-3 text-sm text-plum-muted">
+            ${(analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
           </ul>
         </section>
       </div>
@@ -572,6 +653,8 @@ export class MoodCanvasApp {
     this.state.quickWins = null;
     this.state.miniList = null;
     this.state.palette = null;
+    this.state.paletteOptions = [];
+    this.state.selectedPaletteIndex = null;
     this.render();
   }
 
@@ -588,10 +671,14 @@ export class MoodCanvasApp {
         prompt,
         signal: controller.signal,
       });
-      const normalizedAnalysis = {
-        ...data,
-        render_gallery: normalizeRenderGallery(data),
-      };
+      const normalizedAnalysis = { ...data };
+      const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
+      const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
+      if (defaultPalette) {
+        normalizedAnalysis.palette_60_30_10 = defaultPalette;
+      }
+      normalizedAnalysis.palette_options = paletteOptions;
+      normalizedAnalysis.render_gallery = normalizeRenderGallery(normalizedAnalysis, defaultPalette);
       await saveArtifact(this.state.project.id, {
         kind: 'analysis',
         json: normalizedAnalysis,
@@ -602,7 +689,9 @@ export class MoodCanvasApp {
       });
       this.state.analysis = normalizedAnalysis;
       this.state.quickWins = normalizedAnalysis.quick_wins;
-      this.state.palette = normalizedAnalysis.palette_60_30_10;
+      this.state.paletteOptions = paletteOptions;
+      this.state.palette = null;
+      this.state.selectedPaletteIndex = null;
       this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
     } catch (error) {
       if (error.code === 'missing-key') {
@@ -823,5 +912,170 @@ function evaluateScaleConfidence(guesses) {
     return 'Scale confidence is low; measurements may need manual verification.';
   }
   return null;
+}
+
+function ensurePaletteOptions(analysis) {
+  if (!analysis || typeof analysis !== 'object') {
+    return [];
+  }
+  const provided = Array.isArray(analysis.palette_options)
+    ? analysis.palette_options.map(sanitizePalette).filter(Boolean)
+    : [];
+  const base = sanitizePalette(analysis.palette_60_30_10);
+  const options = [];
+
+  if (base) {
+    options.push(clonePalette(base));
+  }
+
+  for (const palette of provided) {
+    if (!options.some((existing) => palettesEqual(existing, palette))) {
+      options.push(clonePalette(palette));
+    }
+    if (options.length >= 5) {
+      return options.slice(0, 5);
+    }
+  }
+
+  if (base) {
+    const generated = generatePaletteVariations(base);
+    for (const variant of generated) {
+      if (!variant) continue;
+      if (!options.some((existing) => palettesEqual(existing, variant))) {
+        options.push(variant);
+      }
+      if (options.length >= 5) {
+        return options.slice(0, 5);
+      }
+    }
+  }
+
+  if (options.length === 0 && provided.length > 0) {
+    return provided.slice(0, 5).map(clonePalette);
+  }
+
+  while (options.length > 0 && options.length < 5) {
+    options.push(clonePalette(options[options.length - 1]));
+  }
+
+  return options.slice(0, 5);
+}
+
+function sanitizePalette(palette) {
+  if (!palette || typeof palette !== 'object') {
+    return null;
+  }
+  const result = {};
+  let valid = false;
+  for (const key of ['primary', 'secondary', 'accent']) {
+    const swatch = sanitizeSwatch(palette[key]);
+    if (swatch) {
+      result[key] = swatch;
+      valid = true;
+    }
+  }
+  return valid ? result : null;
+}
+
+function sanitizeSwatch(swatch) {
+  if (!swatch || typeof swatch !== 'object') {
+    return null;
+  }
+  const normalized = {};
+  if (typeof swatch.name === 'string') {
+    normalized.name = swatch.name;
+  }
+  if (typeof swatch.hex === 'string') {
+    normalized.hex = normalizeHexString(swatch.hex);
+  }
+  if (typeof swatch.finish === 'string') {
+    normalized.finish = swatch.finish;
+  }
+  if (typeof swatch.usage === 'string') {
+    normalized.usage = swatch.usage;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function clonePalette(palette) {
+  if (!palette) return null;
+  const result = {};
+  for (const key of ['primary', 'secondary', 'accent']) {
+    const swatch = palette[key];
+    result[key] = swatch ? { ...swatch } : null;
+  }
+  return result;
+}
+
+function palettesEqual(a, b) {
+  if (!a || !b) return false;
+  return ['primary', 'secondary', 'accent'].every((key) => {
+    const hexA = normalizeHexString(a[key]?.hex ?? '');
+    const hexB = normalizeHexString(b[key]?.hex ?? '');
+    return hexA === hexB;
+  });
+}
+
+function generatePaletteVariations(base) {
+  if (!base) return [];
+  const configs = [
+    { primaryShift: -0.08, secondaryShift: 0.12, accentShift: 0.18 },
+    { primaryShift: 0.12, secondaryShift: -0.05, accentShift: 0.1 },
+    { primaryShift: -0.15, secondaryShift: -0.1, accentShift: 0.05 },
+    { primaryShift: 0.08, secondaryShift: 0.08, accentShift: -0.12 },
+  ];
+  return configs.map((config) => ({
+    primary: adjustSwatch(base.primary, config.primaryShift),
+    secondary: adjustSwatch(base.secondary, config.secondaryShift),
+    accent: adjustSwatch(base.accent, config.accentShift),
+  }));
+}
+
+function adjustSwatch(swatch, shift) {
+  if (!swatch) return null;
+  const next = { ...swatch };
+  if (typeof next.hex === 'string') {
+    const normalizedHex = normalizeHexString(next.hex);
+    next.hex = adjustHex(normalizedHex, shift);
+  }
+  return next;
+}
+
+function normalizeHexString(hex) {
+  if (typeof hex !== 'string') return '';
+  const trimmed = hex.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+    return `#${trimmed.slice(1).toUpperCase()}`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) {
+    return `#${trimmed.toUpperCase()}`;
+  }
+  return trimmed;
+}
+
+function adjustHex(hex, amount) {
+  if (!/^#[0-9A-F]{6}$/.test(hex)) {
+    return hex;
+  }
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+
+  const change = (value) => {
+    if (!Number.isFinite(amount) || amount === 0) return value;
+    if (amount > 0) {
+      return clamp(Math.round(value + (255 - value) * Math.min(amount, 1)), 0, 255);
+    }
+    return clamp(Math.round(value * (1 + Math.max(amount, -1))), 0, 255);
+  };
+
+  const nr = change(r);
+  const ng = change(g);
+  const nb = change(b);
+  return `#${((1 << 24) + (nr << 16) + (ng << 8) + nb).toString(16).slice(1).toUpperCase()}`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
