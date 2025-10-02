@@ -10,3 +10,4 @@
 - Fixed Gemini client fetch invocation to run within the browser global context, resolving the "Illegal invocation" runtime error when running analysis.
 - Added a unit test ensuring the client binds the fetch implementation correctly to prevent regressions.
 - Sanitized the analysis response schema to match Gemini's structured output format and added regression tests to block unsupported keywords.
+- Relaxed the analysis response schema constraints to keep Gemini structured output under the serving complexity limits and updated the related unit test.

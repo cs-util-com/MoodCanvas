@@ -190,8 +190,9 @@ Use the version shared earlier (“ROLE: Interior design analyst for empty rooms
 The approved **ANALYSIS_SCHEMA** (JSON Schema 2020-12) is part of the app and sent to Gemini in `responseSchema`.
 
 * Required sections: `usage_candidates`, `photo_findings`, `palette_60_30_10`, `constraints`, `quick_wins`, `styles_top10`, `smart_mixed_axes`, `negative_prompts`, `safety_checks`, `render_gallery`.
-* Exact enumerations & lengths enforced (e.g., `styles_top10` length **10**, `render_gallery` length **10**).
-* `scale_guesses` allows `null` for width/depth/height with explicit `confidence`.
+* Enumerations stay explicit while array lengths rely on `minItems` (e.g., `styles_top10` requires **10** entries) to keep the schema light enough for Gemini.
+* Numeric ranges and string patterns (confidence 0-1, hex codes, etc.) are now enforced via prompt instructions and client-side validation instead of schema constraints to avoid the "too many states" error.
+* `scale_guesses` allows `null` for width/depth/height with explicit `confidence` and uses a relaxed `['number','null']` type per field.
 
 # UI & styling
 

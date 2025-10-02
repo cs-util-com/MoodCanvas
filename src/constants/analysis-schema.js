@@ -47,7 +47,6 @@ export const ANALYSIS_SCHEMA = {
     usage_candidates: {
       type: 'array',
       minItems: 3,
-      maxItems: 6,
       items: {
         type: 'object',
         required: ['function', 'confidence', 'why'],
@@ -56,7 +55,7 @@ export const ANALYSIS_SCHEMA = {
             type: 'string',
             enum: SUPPORTED_ROOM_FUNCTIONS,
           },
-          confidence: { type: 'number', minimum: 0, maximum: 1 },
+          confidence: { type: 'number' },
           why: { type: 'string', minLength: 1 },
         },
       },
@@ -106,13 +105,11 @@ export const ANALYSIS_SCHEMA = {
     quick_wins: {
       type: 'array',
       minItems: 5,
-      maxItems: 5,
       items: quickWinSchema(),
     },
     styles_top10: {
       type: 'array',
       minItems: 10,
-      maxItems: 10,
       items: styleScoreSchema(),
     },
     smart_mixed_axes: {
@@ -141,7 +138,6 @@ export const ANALYSIS_SCHEMA = {
     render_gallery: {
       type: 'array',
       minItems: 10,
-      maxItems: 10,
       items: renderPromptSchema(),
     },
   },
@@ -153,10 +149,7 @@ function paletteColorSchema() {
     required: ['name', 'hex', 'finish', 'usage'],
     properties: {
       name: { type: 'string' },
-      hex: {
-        type: 'string',
-        pattern: '^#([A-Fa-f0-9]{6})$',
-      },
+      hex: { type: 'string' },
       finish: { type: 'string' },
       usage: { type: 'string' },
     },
@@ -169,11 +162,9 @@ function scaleGuessSchema() {
     required: ['value', 'confidence'],
     properties: {
       value: {
-        type: 'number',
-        minimum: 0,
-        nullable: true,
+        type: ['number', 'null'],
       },
-      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      confidence: { type: 'number' },
     },
   };
 }
@@ -197,7 +188,7 @@ function styleScoreSchema() {
     required: ['style', 'score', 'why'],
     properties: {
       style: { type: 'string', enum: SUPPORTED_STYLES },
-      score: { type: 'number', minimum: 0, maximum: 1 },
+      score: { type: 'number' },
       why: { type: 'string' },
     },
   };
@@ -217,7 +208,7 @@ function smartAxisSchema() {
           type: 'object',
           required: ['position', 'descriptor'],
           properties: {
-            position: { type: 'number', minimum: 0, maximum: 1 },
+            position: { type: 'number' },
             descriptor: { type: 'string' },
           },
         },

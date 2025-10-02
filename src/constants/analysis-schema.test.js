@@ -27,10 +27,11 @@ describe('ANALYSIS_SCHEMA', () => {
     expect(forbidden).toEqual([]);
   });
 
-  it('allows nullable scale guesses while constraining numeric range', () => {
+  it('allows nullable scale guesses without numeric bounds', () => {
     const scaleGuesses = ANALYSIS_SCHEMA.properties.constraints.properties.scale_guesses;
     const sampleAxis = scaleGuesses.properties.width_m;
-    expect(sampleAxis.properties.value.nullable).toBe(true);
-    expect(sampleAxis.properties.value.minimum).toBe(0);
+    expect(sampleAxis.properties.value.type).toEqual(['number', 'null']);
+    expect(sampleAxis.properties.value.minimum).toBeUndefined();
+    expect(sampleAxis.properties.confidence.minimum).toBeUndefined();
   });
 });
