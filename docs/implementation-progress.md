@@ -18,3 +18,8 @@
 - Added a selectable 60-30-10 palette chooser that surfaces five options and gates the style gallery until a palette is confirmed.
 - Extended the analysis schema and gallery prompt builder to accept palette overrides, including new tests for the override behavior.
 - Implemented palette synthesis helpers to generate fallback palette variations when the analysis response does not provide five distinct options.
+
+## 2025-10-02 (palette diversity upgrade)
+- Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
+- Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
+- Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.

@@ -22,6 +22,7 @@ import {
   buildMiniList,
   normalizeRenderGallery,
 } from '../utils/prompts.js';
+import { ensurePaletteOptions } from '../utils/palette.js';
 
 const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
 const MAX_FAVORITES = 3;
@@ -672,7 +673,7 @@ export class MoodCanvasApp {
         signal: controller.signal,
       });
       const normalizedAnalysis = { ...data };
-      const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
+  const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
       const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
       if (defaultPalette) {
         normalizedAnalysis.palette_60_30_10 = defaultPalette;
@@ -912,170 +913,5 @@ function evaluateScaleConfidence(guesses) {
     return 'Scale confidence is low; measurements may need manual verification.';
   }
   return null;
-}
-
-function ensurePaletteOptions(analysis) {
-  if (!analysis || typeof analysis !== 'object') {
-    return [];
-  }
-  const provided = Array.isArray(analysis.palette_options)
-    ? analysis.palette_options.map(sanitizePalette).filter(Boolean)
-    : [];
-  const base = sanitizePalette(analysis.palette_60_30_10);
-  const options = [];
-
-  if (base) {
-    options.push(clonePalette(base));
-  }
-
-  for (const palette of provided) {
-    if (!options.some((existing) => palettesEqual(existing, palette))) {
-      options.push(clonePalette(palette));
-    }
-    if (options.length >= 5) {
-      return options.slice(0, 5);
-    }
-  }
-
-  if (base) {
-    const generated = generatePaletteVariations(base);
-    for (const variant of generated) {
-      if (!variant) continue;
-      if (!options.some((existing) => palettesEqual(existing, variant))) {
-        options.push(variant);
-      }
-      if (options.length >= 5) {
-        return options.slice(0, 5);
-      }
-    }
-  }
-
-  if (options.length === 0 && provided.length > 0) {
-    return provided.slice(0, 5).map(clonePalette);
-  }
-
-  while (options.length > 0 && options.length < 5) {
-    options.push(clonePalette(options[options.length - 1]));
-  }
-
-  return options.slice(0, 5);
-}
-
-function sanitizePalette(palette) {
-  if (!palette || typeof palette !== 'object') {
-    return null;
-  }
-  const result = {};
-  let valid = false;
-  for (const key of ['primary', 'secondary', 'accent']) {
-    const swatch = sanitizeSwatch(palette[key]);
-    if (swatch) {
-      result[key] = swatch;
-      valid = true;
-    }
-  }
-  return valid ? result : null;
-}
-
-function sanitizeSwatch(swatch) {
-  if (!swatch || typeof swatch !== 'object') {
-    return null;
-  }
-  const normalized = {};
-  if (typeof swatch.name === 'string') {
-    normalized.name = swatch.name;
-  }
-  if (typeof swatch.hex === 'string') {
-    normalized.hex = normalizeHexString(swatch.hex);
-  }
-  if (typeof swatch.finish === 'string') {
-    normalized.finish = swatch.finish;
-  }
-  if (typeof swatch.usage === 'string') {
-    normalized.usage = swatch.usage;
-  }
-  return Object.keys(normalized).length > 0 ? normalized : null;
-}
-
-function clonePalette(palette) {
-  if (!palette) return null;
-  const result = {};
-  for (const key of ['primary', 'secondary', 'accent']) {
-    const swatch = palette[key];
-    result[key] = swatch ? { ...swatch } : null;
-  }
-  return result;
-}
-
-function palettesEqual(a, b) {
-  if (!a || !b) return false;
-  return ['primary', 'secondary', 'accent'].every((key) => {
-    const hexA = normalizeHexString(a[key]?.hex ?? '');
-    const hexB = normalizeHexString(b[key]?.hex ?? '');
-    return hexA === hexB;
-  });
-}
-
-function generatePaletteVariations(base) {
-  if (!base) return [];
-  const configs = [
-    { primaryShift: -0.08, secondaryShift: 0.12, accentShift: 0.18 },
-    { primaryShift: 0.12, secondaryShift: -0.05, accentShift: 0.1 },
-    { primaryShift: -0.15, secondaryShift: -0.1, accentShift: 0.05 },
-    { primaryShift: 0.08, secondaryShift: 0.08, accentShift: -0.12 },
-  ];
-  return configs.map((config) => ({
-    primary: adjustSwatch(base.primary, config.primaryShift),
-    secondary: adjustSwatch(base.secondary, config.secondaryShift),
-    accent: adjustSwatch(base.accent, config.accentShift),
-  }));
-}
-
-function adjustSwatch(swatch, shift) {
-  if (!swatch) return null;
-  const next = { ...swatch };
-  if (typeof next.hex === 'string') {
-    const normalizedHex = normalizeHexString(next.hex);
-    next.hex = adjustHex(normalizedHex, shift);
-  }
-  return next;
-}
-
-function normalizeHexString(hex) {
-  if (typeof hex !== 'string') return '';
-  const trimmed = hex.trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
-    return `#${trimmed.slice(1).toUpperCase()}`;
-  }
-  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) {
-    return `#${trimmed.toUpperCase()}`;
-  }
-  return trimmed;
-}
-
-function adjustHex(hex, amount) {
-  if (!/^#[0-9A-F]{6}$/.test(hex)) {
-    return hex;
-  }
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-
-  const change = (value) => {
-    if (!Number.isFinite(amount) || amount === 0) return value;
-    if (amount > 0) {
-      return clamp(Math.round(value + (255 - value) * Math.min(amount, 1)), 0, 255);
-    }
-    return clamp(Math.round(value * (1 + Math.max(amount, -1))), 0, 255);
-  };
-
-  const nr = change(r);
-  const ng = change(g);
-  const nb = change(b);
-  return `#${((1 << 24) + (nr << 16) + (ng << 8) + nb).toString(16).slice(1).toUpperCase()}`;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }
 
