@@ -356,7 +356,7 @@ export class MoodCanvasApp {
       <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
         <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
         <ol class="space-y-3 text-sm text-plum-muted">
-          ${(analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
+          ${(this.state.analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
         </ol>
       </section>
     `;
