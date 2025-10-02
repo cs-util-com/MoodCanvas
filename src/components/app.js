@@ -569,10 +569,10 @@ export class MoodCanvasApp {
   }
 
   renderInsightsCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const quickWins = this.state.quickWins;
-    const list = this.state.miniList ?? [];
+  const card = document.createElement('section');
+  card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
+  const quickWins = Array.isArray(this.state.quickWins) ? this.state.quickWins : [];
+  const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
     card.innerHTML = `
       <div>
         <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
@@ -588,8 +588,15 @@ export class MoodCanvasApp {
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
           <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
           <ol class="space-y-3 text-sm text-plum-muted">
-            ${(analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
-          </ul>
+            ${list.length > 0
+              ? list
+                  .map(
+                    (item) =>
+                      `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
+                  )
+                  .join('')
+              : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'}
+          </ol>
         </section>
       </div>
     `;
