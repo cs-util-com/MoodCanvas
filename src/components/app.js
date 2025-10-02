@@ -20,6 +20,7 @@ import {
   buildABPrompts,
   buildHeroPrompts,
   buildMiniList,
+  normalizeRenderGallery,
 } from '../utils/prompts.js';
 
 const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
@@ -587,18 +588,22 @@ export class MoodCanvasApp {
         prompt,
         signal: controller.signal,
       });
+      const normalizedAnalysis = {
+        ...data,
+        render_gallery: normalizeRenderGallery(data),
+      };
       await saveArtifact(this.state.project.id, {
         kind: 'analysis',
-        json: data,
+        json: normalizedAnalysis,
       });
       await appendEvent(this.state.project.id, {
         type: 'analysis_done',
         payload: { intendedUse, scope },
       });
-      this.state.analysis = data;
-      this.state.quickWins = data.quick_wins;
-      this.state.palette = data.palette_60_30_10;
-      this.state.warning = evaluateScaleConfidence(data.constraints?.scale_guesses);
+      this.state.analysis = normalizedAnalysis;
+      this.state.quickWins = normalizedAnalysis.quick_wins;
+      this.state.palette = normalizedAnalysis.palette_60_30_10;
+      this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
     } catch (error) {
       if (error.code === 'missing-key') {
         this.settingsModal.showModal();
