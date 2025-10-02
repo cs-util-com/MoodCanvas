@@ -162,7 +162,8 @@ function scaleGuessSchema() {
     required: ['value', 'confidence'],
     properties: {
       value: {
-        type: ['number', 'null'],
+        type: 'number',
+        nullable: true,
       },
       confidence: { type: 'number' },
     },

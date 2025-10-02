@@ -30,7 +30,8 @@ describe('ANALYSIS_SCHEMA', () => {
   it('allows nullable scale guesses without numeric bounds', () => {
     const scaleGuesses = ANALYSIS_SCHEMA.properties.constraints.properties.scale_guesses;
     const sampleAxis = scaleGuesses.properties.width_m;
-    expect(sampleAxis.properties.value.type).toEqual(['number', 'null']);
+    expect(sampleAxis.properties.value.type).toBe('number');
+    expect(sampleAxis.properties.value.nullable).toBe(true);
     expect(sampleAxis.properties.value.minimum).toBeUndefined();
     expect(sampleAxis.properties.confidence.minimum).toBeUndefined();
   });
