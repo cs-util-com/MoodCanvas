@@ -1,5 +1,34 @@
 /* istanbul ignore file */
 
+export const SUPPORTED_ROOM_FUNCTIONS = [
+  'Bedroom',
+  'Home-Office',
+  'Kids Room',
+  'Guest Room',
+  'Living Room',
+  'Dining Room',
+  'Hobby/Studio',
+  'Fitness/Yoga',
+  'Library/Reading',
+  'Music/Recording',
+  'Walk-in Closet',
+  'Storage/Utility',
+  'Other',
+];
+
+export const SUPPORTED_STYLES = [
+  'Scandi',
+  'Japandi',
+  'Modern Minimal',
+  'Contemporary Cozy',
+  'Mid-Century',
+  'Industrial Soft',
+  'Boho',
+  'Rustic',
+  'Mediterranean',
+  'Art-Deco',
+];
+
 export const ANALYSIS_SCHEMA = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'https://moodcanvas.app/schemas/analysis.json',
@@ -29,21 +58,7 @@ export const ANALYSIS_SCHEMA = {
         properties: {
           function: {
             type: 'string',
-            enum: [
-              'Bedroom',
-              'Home-Office',
-              'Kids Room',
-              'Guest Room',
-              'Living Room',
-              'Dining Room',
-              'Hobby/Studio',
-              'Fitness/Yoga',
-              'Library/Reading',
-              'Music/Recording',
-              'Walk-in Closet',
-              'Storage/Utility',
-              'Other',
-            ],
+            enum: SUPPORTED_ROOM_FUNCTIONS,
           },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
           why: { type: 'string', minLength: 1 },
@@ -135,35 +150,6 @@ export const ANALYSIS_SCHEMA = {
     },
   },
 };
-
-export const SUPPORTED_ROOM_FUNCTIONS = [
-  'Bedroom',
-  'Home-Office',
-  'Kids Room',
-  'Guest Room',
-  'Living Room',
-  'Dining Room',
-  'Hobby/Studio',
-  'Fitness/Yoga',
-  'Library/Reading',
-  'Music/Recording',
-  'Walk-in Closet',
-  'Storage/Utility',
-  'Other',
-];
-
-export const SUPPORTED_STYLES = [
-  'Scandi',
-  'Japandi',
-  'Modern Minimal',
-  'Contemporary Cozy',
-  'Mid-Century',
-  'Industrial Soft',
-  'Boho',
-  'Rustic',
-  'Mediterranean',
-  'Art-Deco',
-];
 
 function paletteColorSchema() {
   return {

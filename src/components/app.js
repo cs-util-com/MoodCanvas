@@ -349,7 +349,11 @@ export class MoodCanvasApp {
   renderPaletteSwatch(label, info) {
     return `
       <div class="flex flex-col gap-2 text-xs text-center">
-        <div class="rounded-xl2 border border-plum-border/40" style="background:${info.hex}; min-height:72px"></div>
+        <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
+          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
+            <rect width="100" height="100" fill="${info.hex}" />
+          </svg>
+        </div>
         <div class="flex flex-col">
           <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
           <span>${info.name}</span>

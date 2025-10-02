@@ -3,30 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' blob: data:; connect-src https://generativelanguage.googleapis.com; script-src 'self' https://cdn.tailwindcss.com; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
+    />
     <title>About · MoodCanvas</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              plum: '#392338',
-              'plum-surface': '#3F2840',
-              'plum-surface-2': '#462E49',
-              'plum-border': '#513354',
-              peach: '#FFCFA4',
-              raspberry: '#C1264E',
-            },
-            borderRadius: {
-              xl2: '1.5rem',
-            },
-            fontFamily: {
-              sans: ['"Inter"', 'system-ui', 'sans-serif'],
-            },
-          },
-        },
-      };
-    </script>
+    <script src="../src/tailwind-config.js"></script>
   </head>
   <body class="h-full bg-plum text-peach font-sans">
     <div class="min-h-full">

@@ -5,45 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' blob: data:; connect-src https://generativelanguage.googleapis.com; script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
+      content="default-src 'self'; img-src 'self' blob: data:; connect-src https://generativelanguage.googleapis.com; script-src 'self' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
     />
     <title>MoodCanvas · Interior Design Assistant</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23392338'/%3E%3Ccircle cx='32' cy='32' r='18' fill='%23FFCFA4'/%3E%3C/svg%3E" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              plum: '#392338',
-              'plum-surface': '#3F2840',
-              'plum-surface-2': '#462E49',
-              'plum-border': '#513354',
-              'plum-muted': '#CFC7D2',
-              'plum-text': '#EDEDED',
-              peach: '#FFCFA4',
-              coral: '#FF947F',
-              raspberry: '#C1264E',
-            },
-            borderRadius: {
-              xl2: '1.5rem',
-            },
-            boxShadow: {
-              dialog: '0 32px 80px -32px rgba(0,0,0,0.65)',
-            },
-            fontFamily: {
-              sans: [
-                '"Inter"',
-                '"SF Pro Text"',
-                '"Segoe UI"',
-                'system-ui',
-                'sans-serif',
-              ],
-            },
-          },
-        },
-      };
-    </script>
+  <script src="./src/tailwind-config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="h-full bg-plum text-plum-text">
     <div id="app" class="min-h-full"></div>
