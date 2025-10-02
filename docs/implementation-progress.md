@@ -5,3 +5,7 @@
 - Implemented local BYOK handling, IndexedDB project store, and sequential chat-like timeline for the room design workflow.
 - Added prompt builders, Gemini client integration scaffolding, and unit tests covering prompt generation utilities.
 - Persisted project media/artifacts locally and wired gallery, A/B, and hero render cards with concurrency scaffolding.
+
+## 2025-10-02
+- Fixed Gemini client fetch invocation to run within the browser global context, resolving the "Illegal invocation" runtime error when running analysis.
+- Added a unit test ensuring the client binds the fetch implementation correctly to prevent regressions.

@@ -109,7 +109,7 @@ export class GeminiClient {
       : controller.signal;
 
     try {
-      const response = await this.fetchImpl(`${API_ROOT}/${model}`, {
+      const requestOptions = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -117,7 +117,13 @@ export class GeminiClient {
         },
         body: JSON.stringify(body),
         signal: mergedSignal,
-      });
+      };
+
+      const response = await Reflect.apply(
+        this.fetchImpl,
+        globalThis,
+        [`${API_ROOT}/${model}`, requestOptions]
+      );
 
       if (!response.ok) {
         throw buildGeminiError(await safeJson(response), 'Gemini request failed', response.status);
