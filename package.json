@@ -10,9 +10,9 @@
     "mutation": "stryker run config/stryker.conf.json; node mutation-testing/mutation-report-to-md.js",
     "check:dup": "jscpd --config config/.jscpd.json src",
     "check:cycles": "madge --circular --extensions js src",
-  "check:boundaries": "depcruise -c config/.dependency-cruiser.js src",
-  "build:css": "tailwindcss -i ./src/tailwind.input.pcss -o ./styles/app.css --minify",
-  "check:all": "npm run lint && npm run check:dup && npm run check:cycles && npm run check:boundaries",
+    "check:boundaries": "depcruise -c config/.dependency-cruiser.js src",
+    "build:css": "tailwindcss -i ./src/tailwind.input.pcss -o ./styles/app.css --minify",
+    "check:all": "npm run lint && npm run check:dup && npm run check:cycles && npm run check:boundaries",
     "validate:all": "npm run test && npm run check:all && npm run mutation"
   },
   "keywords": [],
