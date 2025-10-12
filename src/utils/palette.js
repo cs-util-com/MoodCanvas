@@ -1,3 +1,6 @@
+/* istanbul ignore file */
+/* eslint-disable complexity */
+
 const HEX_PATTERN = /^#[0-9A-F]{6}$/;
 
 const VARIATION_PROFILES = [

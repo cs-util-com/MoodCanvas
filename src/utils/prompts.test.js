@@ -1,318 +1,157 @@
 import {
-  buildAnalysisPrompt,
-  buildABPrompts,
-  buildHeroPrompts,
-  buildMiniList,
-  normalizeRenderGallery,
+  buildRoomBriefPrompt,
+  favoritesToTextBlock,
+  buildIterationPrompt,
+  buildFinalizationPrompt,
+  runIterationBatch,
 } from './prompts.js';
-import { SUPPORTED_STYLES } from '../constants/analysis-schema.js';
 
-describe('prompt builders', () => {
-  test('buildAnalysisPrompt returns multiline prompt with defaults', () => {
-    const prompt = buildAnalysisPrompt({
-      intendedUse: 'Living Room',
-      scope: 3,
-      notes: '',
+describe('buildRoomBriefPrompt', () => {
+  it('injects purpose and notes into the prompt', () => {
+    const prompt = buildRoomBriefPrompt({
+      purpose: 'Evening lounge',
+      notes: 'Highlight layered lighting',
     });
-    expect(prompt).toContain('ROLE: Interior design analyst for empty rooms.');
-    expect(prompt).toContain('INTENDED USE: Living Room.');
-    expect(prompt).toContain('INTERVENTION SCOPE: 3.');
-    expect(prompt).toContain('NOTES: None provided.');
-  });
-
-  test('buildABPrompts returns prompts for both axes', () => {
-    const prompts = buildABPrompts('Base prompt', {
-      axisA: { label: 'Cozy', description: 'Layer warm textures' },
-      axisB: { label: 'Minimal', description: 'Streamline surfaces' },
-    });
-    expect(prompts).toHaveLength(2);
-    expect(prompts[0]).toContain('Cozy');
-    expect(prompts[1]).toContain('Minimal');
-  });
-
-  test('buildABPrompts throws when required data missing', () => {
-    expect(() => buildABPrompts('', null)).toThrow(
-      'basePrompt and axes are required'
+    expect(prompt).toContain('Intended use: Evening lounge');
+    expect(prompt).toContain(
+      'Notes from user (optional): Highlight layered lighting'
+    );
+    expect(prompt).toContain(
+      'Layered lighting: ambient + task + accent; evening ~2700–3000 K.'
     );
   });
 
-  test('buildHeroPrompts returns three hero mixes', () => {
-    const prompts = buildHeroPrompts('Base prompt', {
-      axisA: { label: 'Cozy', description: 'Layer warm textures' },
-      axisB: { label: 'Minimal', description: 'Streamline surfaces' },
-    });
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain('sweet spot');
-  });
-
-  test('buildHeroPrompts throws when base prompt missing', () => {
-    expect(() => buildHeroPrompts('', null)).toThrow(
-      'basePrompt and axes are required'
-    );
+  it('falls back to "None" when purpose or notes are missing', () => {
+    const prompt = buildRoomBriefPrompt({ purpose: '', notes: '' });
+    expect(prompt).toContain('Intended use: None');
+    expect(prompt).toContain('Notes from user (optional): None');
   });
 });
 
-describe('buildMiniList', () => {
-  test('combines quick wins and staples up to five items', () => {
-    const analysis = {
-      quick_wins: Array.from({ length: 6 }, (_, index) => ({
-        title: `Win ${index + 1}`,
-        description: `Do thing ${index + 1}`,
+describe('favoritesToTextBlock', () => {
+  it('concatenates descriptors and notes into lines', () => {
+    const block = favoritesToTextBlock([
+      {
+        text: 'Warm palette with diffused wall lights',
+        note: 'Keep wall sconces',
+      },
+      { text: 'Airier layout with sculptural chair' },
+    ]);
+    expect(block.split('\n')).toHaveLength(2);
+    expect(block).toContain(
+      'Favorite 1: Warm palette with diffused wall lights — Note: Keep wall sconces'
+    );
+    expect(block).toContain('Favorite 2: Airier layout with sculptural chair');
+  });
+
+  it('returns an empty string when no favorites are supplied', () => {
+    expect(favoritesToTextBlock([])).toBe('');
+  });
+
+  it('returns an empty string when input is not an array', () => {
+    expect(favoritesToTextBlock(null)).toBe('');
+  });
+});
+
+describe('buildIterationPrompt', () => {
+  it('builds a multi-line guidance block with diversity hint', () => {
+    const prompt = buildIterationPrompt({
+      roomBrief: 'North-facing room with generous glazing.',
+      purpose: 'Reading nook',
+      roundGuidance: 'Integrate a dedicated reading chair.',
+      favoritesTextBlock: 'Favorite 1: Soft boucle chair with brass floor lamp',
+      diversityHint: 'slightly warmer palette; gentler contrast',
+    });
+
+    expect(prompt).toContain(
+      'Use the attached base room photo as fixed camera pose'
+    );
+    expect(prompt).toContain(
+      '• Room brief (silent): North-facing room with generous glazing.'
+    );
+    expect(prompt).toContain('• Intended use: Reading nook');
+    expect(prompt).toContain(
+      'Favorite 1: Soft boucle chair with brass floor lamp'
+    );
+    expect(prompt).toContain(
+      'Diversity hint for this image: slightly warmer palette; gentler contrast'
+    );
+    expect(prompt).toContain(
+      'Generate ONE updated interior variant at 1024×682'
+    );
+  });
+
+  it('uses "None" placeholders for missing values', () => {
+    const prompt = buildIterationPrompt({
+      roomBrief: '',
+      purpose: '',
+      roundGuidance: '',
+      favoritesTextBlock: '',
+      diversityHint: '',
+    });
+    expect(prompt).toContain('• Room brief (silent): None');
+    expect(prompt).toContain('• Intended use: None');
+    expect(prompt).toContain('• Selected favorites (as free-text, raw): None');
+    expect(prompt).toContain('Diversity hint for this image: None');
+  });
+});
+
+describe('buildFinalizationPrompt', () => {
+  it('produces a compact finalization instruction block', () => {
+    const prompt = buildFinalizationPrompt();
+    expect(prompt).toContain('high-resolution re-render at 1536×1024');
+    expect(prompt).toContain('Build Notes (5–7 sentences)');
+  });
+});
+
+describe('runIterationBatch', () => {
+  it('executes every hint and reports progress', async () => {
+    const deck = ['hint-a', 'hint-b', 'hint-c'];
+    const results = [];
+    await runIterationBatch({
+      base64Main: 'base',
+      mimeMain: 'image/jpeg',
+      references: [],
+      roomBrief: 'Brief text',
+      purpose: 'Lounge',
+      roundGuidance: 'Keep original sofa',
+      favoritesTextBlock: 'Favorite 1: Keep floor lamp',
+      sampling: { temperature: 0.7, topP: 0.9, topK: 32 },
+      deck,
+      generateVariant: jest.fn().mockImplementation(async ({ promptText }) => ({
+        imageUrl: `blob:${promptText.length}`,
+        text: 'Descriptor',
+        warnings: [],
       })),
-      usage_candidates: [
-        { function: 'Living Room', why: 'Best match' },
-        { function: 'Home-Office', why: 'Secondary' },
-        { function: 'Guest Room', why: 'Tertiary' },
-      ],
-    };
-    const list = buildMiniList(analysis);
-    expect(list).toHaveLength(5);
-    expect(list[0].name).toBe('Win 1');
-    expect(list[3].name).toContain('Living Room');
+      onProgress: (payload) => results.push(payload),
+    });
+
+    expect(results).toHaveLength(deck.length);
+    expect(results.every((entry) => entry.ok)).toBe(true);
+    const prompts = results.map((entry) => entry.result.imageUrl);
+    expect(prompts).toHaveLength(3);
   });
 
-  test('returns empty list when analysis missing', () => {
-    expect(buildMiniList(null)).toEqual([]);
+  it('throws when generateVariant is missing', async () => {
+    await expect(
+      runIterationBatch({
+        base64Main: 'base',
+        mimeMain: 'image/jpeg',
+      })
+    ).rejects.toThrow('generateVariant is required');
   });
 
-  test('handles missing quick wins gracefully', () => {
-    const analysis = {
-      usage_candidates: [{ function: 'Living Room', why: 'Best match' }],
-    };
-    const list = buildMiniList(analysis);
-    expect(list).toHaveLength(1);
-    expect(list[0].name).toContain('Living Room');
-  });
-
-  test('handles missing usage candidates gracefully', () => {
-    const analysis = {
-      quick_wins: [],
-    };
-    const list = buildMiniList(analysis);
-    expect(list).toEqual([]);
-  });
-});
-
-describe('normalizeRenderGallery', () => {
-  const palette = {
-    primary: { name: 'Deep Plum', hex: '#392338' },
-    secondary: { name: 'Muted Peach', hex: '#FFCFA4' },
-    accent: { name: 'Raspberry', hex: '#C1264E' },
-  };
-
-  test('preserves existing prompts and fills missing styles to ten entries', () => {
-    const analysis = {
-      render_gallery: [
-        {
-          style: 'Scandi',
-          prompt: 'Existing Scandi prompt',
-          focus: 'Scandi focus',
-          guidance: 'Scandi guidance',
-        },
-        { style: 'Japandi', prompt: 'Existing Japandi prompt' },
-        { style: 'Modern Minimal', prompt: 'Existing Modern prompt' },
-        { style: 'Contemporary Cozy', prompt: 'Existing Cozy prompt' },
-      ],
-      styles_top10: [
-        { style: 'Scandi', why: 'Light woods and serene palette' },
-        { style: 'Japandi', why: 'Calm, crafted minimalism' },
-        { style: 'Modern Minimal', why: 'Clean planes and negative space' },
-        {
-          style: 'Contemporary Cozy',
-          why: 'Soft textures with modern silhouettes',
-        },
-        { style: 'Mid-Century', why: 'Warm woods and iconic shapes' },
-        {
-          style: 'Industrial Soft',
-          why: 'Tactile contrast without harsh edges',
-        },
-      ],
-      palette_60_30_10: palette,
-      constraints: { limitations: ['Do not remove existing flooring'] },
-      negative_prompts: ['No text overlays'],
-      photo_findings: {
-        architectural_features: 'Large corner windows and crown moulding',
-        lighting: 'North-facing soft daylight',
-      },
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    expect(normalized).toHaveLength(10);
-    const scandi = normalized.find((item) => item.style === 'Scandi');
-    expect(scandi.prompt).toBe('Existing Scandi prompt');
-    const artDeco = normalized.find((item) => item.style === 'Art-Deco');
-    expect(artDeco).toBeDefined();
-    expect(artDeco.prompt).toContain('Art-Deco');
-    expect(artDeco.guidance).toContain('Preserve existing architecture');
-  });
-
-  test('trims existing text values and falls back when empty', () => {
-    const analysis = {
-      render_gallery: [
-        {
-          style: 'Rustic',
-          prompt: '  Custom rustic prompt  ',
-          focus: '   ',
-          guidance: '',
-        },
-      ],
-      styles_top10: [{ style: 'Rustic', why: '   ' }],
-      palette_60_30_10: palette,
-      negative_prompts: [],
-      photo_findings: {},
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    expect(normalized).toHaveLength(10);
-    const rustic = normalized.find((item) => item.style === 'Rustic');
-    expect(rustic.prompt).toBe('Custom rustic prompt');
-    expect(rustic.focus).toBe('Rustic concept direction');
-    expect(rustic.guidance).toContain('Preserve existing architecture');
-  });
-
-  test('handles missing palette and limitations gracefully', () => {
-    const analysis = {
-      render_gallery: [],
-      styles_top10: [
-        { style: 'Industrial Soft', why: 'Contrast of raw and refined' },
-      ],
-      negative_prompts: ['No text'],
-      constraints: { limitations: [] },
-      photo_findings: {
-        architectural_features: 'Exposed brick wall',
-      },
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    const industrial = normalized.find(
-      (item) => item.style === 'Industrial Soft'
-    );
-    expect(industrial.prompt).toContain('Exposed brick wall');
-    expect(industrial.prompt).toContain('Avoid: No text');
-  });
-
-  test('falls back to generated prompt when existing entry lacks prompt text', () => {
-    const analysis = {
-      render_gallery: [
-        { style: 'Boho', prompt: 42, focus: 'Existing focus', guidance: 42 },
-      ],
-      styles_top10: [
-        { style: 'Boho', why: 'Layered textiles and artisanal pieces' },
-      ],
-      negative_prompts: ['No clutter'],
-      photo_findings: {
-        lighting: 'Golden hour glow',
-      },
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    const boho = normalized.find((item) => item.style === 'Boho');
-    expect(boho.prompt).toContain('Photorealistic interior render');
-    expect(boho.prompt).toContain('Golden hour glow');
-    expect(boho.focus).toBe('Existing focus');
-    expect(boho.guidance).toContain('Preserve existing architecture');
-  });
-
-  test('describes palette even when swatches are partial', () => {
-    const analysis = {
-      render_gallery: [],
-      styles_top10: [{ style: 'Mediterranean', why: 'Sun-baked textures' }],
-      palette_60_30_10: {
-        primary: { hex: '#101010' },
-        secondary: { name: 'Sea Glass' },
-        accent: null,
-      },
-      negative_prompts: [],
-      photo_findings: {
-        architectural_features: 'Arched doorway',
-      },
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    const mediterranean = normalized.find(
-      (item) => item.style === 'Mediterranean'
-    );
-    expect(mediterranean.prompt).toContain('Primary #101010');
-    expect(mediterranean.prompt).toContain('Secondary Sea Glass');
-    expect(mediterranean.prompt).not.toContain('Accent');
-  });
-
-  test('caps results at ten even when analysis provides extra entries', () => {
-    const extraStyle = 'Experimental';
-    const baseGallery = SUPPORTED_STYLES.map((style, index) => ({
-      style,
-      prompt: index === 0 ? '   ' : `${style} prompt`,
-    }));
-    const analysis = {
-      render_gallery: [
-        ...baseGallery,
-        { style: extraStyle, prompt: `${extraStyle} prompt` },
-      ],
-      styles_top10: [
-        { style: extraStyle, why: 'Just for exploration' },
-        ...SUPPORTED_STYLES.map((style) => ({
-          style,
-          why: `${style} fit reason`,
-        })),
-        { style: 'Japandi', why: 'duplicate should be skipped' },
-        { style: '', why: 'invalid should be ignored' },
-      ],
-      negative_prompts: [],
-      photo_findings: {},
-    };
-
-    const normalized = normalizeRenderGallery(analysis);
-    expect(normalized).toHaveLength(10);
-    expect(normalized.some((item) => item.style === extraStyle)).toBe(true);
-  });
-
-  test('uses palette override when provided', () => {
-    const analysis = {
-      render_gallery: [],
-      styles_top10: [{ style: 'Scandi', why: 'Calm minimalism' }],
-      palette_60_30_10: {
-        primary: { name: 'Base Primary', hex: '#101010' },
-        secondary: { name: 'Base Secondary', hex: '#222222' },
-        accent: { name: 'Base Accent', hex: '#333333' },
-      },
-      negative_prompts: [],
-      photo_findings: {},
-    };
-    const override = {
-      primary: { name: 'Override Primary', hex: '#445566' },
-      secondary: { name: 'Override Secondary', hex: '#778899' },
-      accent: { name: 'Override Accent', hex: '#AABBCC' },
-    };
-
-    const normalized = normalizeRenderGallery(analysis, override);
-    const scandi = normalized.find((item) => item.style === 'Scandi');
-    expect(scandi.prompt).toContain('#445566');
-    expect(scandi.prompt).toContain('#778899');
-  });
-
-  test('enters fallback fill path when fewer than ten supported styles exist', () => {
-    const originalStyles = [...SUPPORTED_STYLES];
-    SUPPORTED_STYLES.splice(0, SUPPORTED_STYLES.length, 'Scandi', 'Japandi');
-
-    try {
-      const analysis = {
-        render_gallery: [],
-        styles_top10: [{ style: 'Scandi', why: 'Calm balance' }],
-        negative_prompts: [],
-        photo_findings: {},
-      };
-
-      const normalized = normalizeRenderGallery(analysis);
-      expect(normalized).toHaveLength(2);
-      expect(
-        normalized.every((item) => SUPPORTED_STYLES.includes(item.style))
-      ).toBe(true);
-    } finally {
-      SUPPORTED_STYLES.splice(0, SUPPORTED_STYLES.length, ...originalStyles);
-    }
-  });
-
-  test('returns empty array when analysis missing', () => {
-    expect(normalizeRenderGallery(null)).toEqual([]);
+  it('surfaces errors through onProgress', async () => {
+    const errors = [];
+    await runIterationBatch({
+      base64Main: 'base',
+      mimeMain: 'image/jpeg',
+      deck: ['hint-only'],
+      generateVariant: jest.fn().mockRejectedValue(new Error('boom')),
+      onProgress: (payload) => errors.push(payload),
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].ok).toBe(false);
+    expect(errors[0].error).toEqual(new Error('boom'));
   });
 });

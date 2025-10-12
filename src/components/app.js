@@ -1,68 +1,85 @@
 /* istanbul ignore file */
+/* eslint-disable complexity */
+
 import {
   readGeminiKey,
   saveGeminiKey,
   clearGeminiKey,
   onKeyChange,
 } from '../utils/key-store.js';
-import { GeminiClient } from '../utils/gemini-client.js';
 import {
-  normalizeImageFile,
+  fileToResized,
   blobToBase64,
-  blobToDataUrl,
-  base64ToBlob,
+  blobUrlToBase64,
 } from '../utils/image.js';
+import { GeminiFlows, DEFAULT_SAMPLING } from '../utils/gemini-flows.js';
 import {
-  ensureProject,
-  getProject,
-  saveMedia,
-  saveArtifact,
-  appendEvent,
-} from '../utils/project-store.js';
-import { SUPPORTED_ROOM_FUNCTIONS } from '../constants/analysis-schema.js';
-import {
-  buildAnalysisPrompt,
-  buildABPrompts,
-  buildHeroPrompts,
-  buildMiniList,
-  normalizeRenderGallery,
+  buildRoomBriefPrompt,
+  favoritesToTextBlock,
+  buildFinalizationPrompt,
+  runIterationBatch,
+  buildIterationPrompt,
 } from '../utils/prompts.js';
-import { ensurePaletteOptions } from '../utils/palette.js';
+import { diversityDeck } from '../utils/diversity.js';
 
-const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
-const MAX_FAVORITES = 3;
+const SAMPLING_STORAGE_KEY = 'moodcanvas.sampling';
+
+function formatRoomBriefText(roomBrief) {
+  if (!roomBrief || (!roomBrief.paragraph && !roomBrief.bullets?.length)) {
+    return '';
+  }
+  const bullets = Array.isArray(roomBrief.bullets)
+    ? roomBrief.bullets.map((item) => `• ${item}`).join('\n')
+    : '';
+  return [roomBrief.paragraph, bullets].filter(Boolean).join('\n');
+}
+
+function createButton(classes, text) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = classes;
+  button.textContent = text;
+  return button;
+}
 
 export class MoodCanvasApp {
   constructor(root) {
     this.root = root;
-    this.client = new GeminiClient();
     this.state = {
-      loading: false,
       apiKey: '',
-      project: null,
-      photo: null,
-      analysis: null,
-      gallery: [],
-      favorites: new Set(),
-      abVariants: [],
-      heroRenders: [],
-      quickWins: null,
-      miniList: null,
-      palette: null,
-      paletteOptions: [],
-      selectedPaletteIndex: null,
-      warning: null,
-      error: null,
+      sampling: { ...DEFAULT_SAMPLING },
+      main: null,
+      purpose: '',
+      firstNotes: '',
+      references: [],
+      roomBrief: {
+        status: 'idle',
+        paragraph: '',
+        bullets: [],
+        error: null,
+        raw: '',
+      },
+      rounds: [],
+      final: { imageUrl: '', notes: '' },
+      candidate: { imageUrl: '', notes: '' },
+      selectedCount: 0,
+      runningRound: false,
     };
+    this.gemini = new GeminiFlows();
     this.unsubscribeKey = null;
-    this.controller = null;
+    this.roomBriefTimeout = null;
   }
 
   async init() {
     this.renderShell();
-    await this.bootstrapProject();
+    this.bootstrapSampling();
     this.bootstrapKey();
-    this.render();
+    this.bindEvents();
+    this.renderKeyStatus();
+    this.renderKeyBanner();
+    this.renderRoomBrief();
+    this.renderRounds();
+    this.updateGenerateBar();
   }
 
   destroy() {
@@ -74,915 +91,1001 @@ export class MoodCanvasApp {
 
   renderShell() {
     this.root.innerHTML = `
-      <div class="min-h-full flex flex-col">
+      <div class="min-h-full flex flex-col bg-plum text-plum-text">
         <header class="border-b border-plum-border/40 bg-plum-surface">
-          <div class="mx-auto w-full max-w-5xl px-6 py-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div class="mx-auto w-full max-w-6xl px-6 py-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p class="text-peach uppercase tracking-[0.3em] text-xs font-semibold">MoodCanvas</p>
-              <h1 class="text-2xl md:text-3xl font-semibold">Interior Design Assistant</h1>
+              <p class="text-peach uppercase tracking-[0.35em] text-xs font-semibold">MoodCanvas</p>
+              <h1 class="text-2xl md:text-3xl font-semibold">Iterative concept studio</h1>
               <p class="text-sm text-plum-muted max-w-xl">
-                Upload a single empty-room photo, explore tailored styles, and collect actionable next steps without leaving your browser.
+                Upload one room photo, add optional purpose and style references, then iterate in 12-image rounds with notes, favorites, and hi-res finalization — all on-device with your Gemini API key.
               </p>
             </div>
             <div class="flex items-center gap-3">
-              <span id="keyStatus" class="rounded-full border border-plum-border/40 px-3 py-1 text-xs uppercase tracking-widest text-plum-muted"></span>
-              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry text-white px-4 py-2 text-sm font-medium transition">
-                Settings
-              </button>
+              <span id="keyStatus" class="rounded-full border border-plum-border/40 px-3 py-1 text-xs uppercase tracking-[0.3em] text-plum-muted"></span>
+              <button id="settingsBtn" class="rounded-full bg-raspberry px-4 py-2 text-sm font-medium hover:bg-raspberry/80 transition">Settings</button>
             </div>
           </div>
         </header>
         <main class="flex-1">
-          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="timeline"></div>
-        </main>
-      </div>
-      <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
-        <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
-          <header>
-            <h2 class="text-xl font-semibold">Settings</h2>
-            <p class="text-sm text-plum-muted">Manage your Google Gemini API key for on-device usage.</p>
-          </header>
-          <label class="flex flex-col gap-2 text-sm">
-            <span>Gemini API key</span>
-            <input id="keyInput" name="geminiKey" type="password" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="AIza..." />
-          </label>
-          <div class="flex flex-col gap-3 text-xs text-plum-muted">
-            <p>Bring your own key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="text-peach underline">Google AI Studio</a>. Keys are stored only in this browser.</p>
-            <button type="button" id="clearKeyBtn" class="self-start rounded-full border border-raspberry/50 px-3 py-1 text-raspberry hover:bg-raspberry/10">Remove key from this device</button>
+          <div class="mx-auto w-full max-w-6xl px-6 py-8 flex flex-col gap-6">
+            <section id="keyBanner" class="rounded-xl2 border border-raspberry/40 bg-raspberry/10 px-6 py-5 flex flex-col gap-4 hidden">
+              <div>
+                <h2 class="text-lg font-semibold">Bring your own Gemini key</h2>
+                <p class="text-sm text-plum-muted">
+                  Retrieve an API key from <a class="text-peach underline" href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer">Google AI Studio</a>. The key is stored only in this browser.
+                </p>
+              </div>
+              <div class="flex flex-col gap-3 md:flex-row md:items-center">
+                <input id="bannerKeyInput" type="password" placeholder="AIza..." class="flex-1 rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/60" />
+                <button id="bannerKeySave" class="rounded-xl2 bg-peach text-plum px-4 py-2 text-sm font-medium hover:bg-peach/80 transition">Save key</button>
+              </div>
+            </section>
+            <section class="rounded-xl2 border border-plum-border/40 bg-plum-surface px-6 py-6 flex flex-col gap-5">
+              <header class="flex items-center justify-between flex-wrap gap-2">
+                <h2 class="text-xl font-semibold">Project setup</h2>
+                <button id="btnFirst" class="rounded-full bg-peach text-plum px-4 py-2 text-sm font-medium hover:bg-peach/80 transition">Start generating first suggestions</button>
+              </header>
+              <div class="grid gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <div class="flex flex-col gap-4">
+                  <label class="flex flex-col gap-2 text-sm">
+                    <span class="text-plum-muted uppercase tracking-[0.2em] text-xs">Main room photo</span>
+                    <input id="mainFile" type="file" accept="image/jpeg,image/png" capture="environment" class="rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2" />
+                  </label>
+                  <div id="mainPreview" class="rounded-xl2 border border-plum-border/40 bg-plum-surface-2 min-h-[160px] flex items-center justify-center text-plum-muted text-sm">
+                    Upload a room photo to begin.
+                  </div>
+                  <label class="flex flex-col gap-2 text-sm">
+                    <span class="text-plum-muted uppercase tracking-[0.2em] text-xs">Intended use</span>
+                    <input id="purposeInput" type="text" placeholder="e.g. Cozy living room for evening gatherings" class="rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/60" />
+                  </label>
+                  <label class="flex flex-col gap-2 text-sm">
+                    <span class="text-plum-muted uppercase tracking-[0.2em] text-xs">Initial notes (optional)</span>
+                    <textarea id="firstNotesInput" rows="3" placeholder="Key functional goals or atmosphere cues" class="rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/60"></textarea>
+                  </label>
+                </div>
+                <div class="flex flex-col gap-3">
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium">Style references (0–2)</span>
+                    <span class="text-xs text-plum-muted">First = strongest influence</span>
+                  </div>
+                  <div id="refsContainer" class="flex flex-col gap-3"></div>
+                </div>
+              </div>
+              <p id="firstHint" class="text-sm text-plum-muted"></p>
+            </section>
+            <section class="rounded-xl2 border border-plum-border/40 bg-plum-surface px-6 py-5 flex flex-col gap-4">
+              <header class="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h2 class="text-xl font-semibold">Room brief</h2>
+                  <p class="text-sm text-plum-muted">Generated silently from the base photo and intended use. Updates automatically if the purpose changes.</p>
+                </div>
+                <button id="regenBrief" class="rounded-full border border-plum-border/50 px-4 py-2 text-sm hover:bg-plum-surface-2 transition">Regenerate</button>
+              </header>
+              <div id="roomBriefContent" class="text-sm text-plum-muted"></div>
+            </section>
+            <section class="flex flex-col gap-3">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <h2 class="text-xl font-semibold">Iterations</h2>
+                <button id="btnRestart" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm hover:bg-plum-surface/80 transition">Restart (clear generated rounds)</button>
+              </div>
+              <div id="iterations" class="flex flex-col gap-4"></div>
+            </section>
           </div>
+        </main>
+        <div id="generateBar" class="hidden border-t border-plum-border/50 bg-plum-surface px-6 py-4">
+          <div class="mx-auto flex w-full max-w-6xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:gap-4 w-full">
+              <span id="selCount" class="text-sm text-plum-muted">0 selected</span>
+              <input id="roundGuidance" type="text" placeholder="Guidance for next iteration" class="flex-1 rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/60" />
+            </div>
+            <button id="btnGenerate" class="rounded-full bg-peach text-plum px-5 py-2 text-sm font-semibold hover:bg-peach/80 transition md:self-start">Generate next iteration</button>
+          </div>
+        </div>
+      </div>
+      <div id="finalBackdrop" class="hidden fixed inset-0 z-40 bg-black/70"></div>
+      <div id="finalModal" class="hidden fixed inset-0 z-40 flex items-center justify-center px-4 py-8 overflow-auto">
+        <div class="w-full max-w-5xl rounded-xl2 border border-plum-border/40 bg-plum-surface px-6 py-6 shadow-dialog">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-semibold">Compare & decide</h3>
+            <button id="finalClose" class="rounded-full border border-plum-border/60 px-3 py-1 text-sm hover:bg-plum-surface-2">Close</button>
+          </div>
+          <div class="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <p class="text-sm text-plum-muted mb-2">Current final</p>
+              <img id="finalCurrent" class="w-full rounded-xl2 border border-plum-border/40 bg-plum-surface-2" alt="Current final render" />
+              <p id="finalCurrentNotes" class="mt-2 text-sm text-plum-muted whitespace-pre-wrap"></p>
+            </div>
+            <div>
+              <p class="text-sm text-plum-muted mb-2">Candidate</p>
+              <img id="finalCandidate" class="w-full rounded-xl2 border border-plum-border/40 bg-plum-surface-2" alt="Candidate render" />
+              <p id="finalCandidateNotes" class="mt-2 text-sm text-plum-muted whitespace-pre-wrap"></p>
+            </div>
+          </div>
+          <div class="mt-6 flex justify-end gap-3">
+            <button id="finalKeep" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm hover:bg-plum-surface-2">Keep current</button>
+            <button id="finalReplace" class="rounded-full bg-peach text-plum px-4 py-2 text-sm font-semibold hover:bg-peach/80">Replace with candidate</button>
+          </div>
+        </div>
+      </div>
+      <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface text-plum-text shadow-dialog p-0">
+        <form method="dialog" class="flex flex-col gap-6 p-6 min-w-[320px]">
+          <header class="flex flex-col gap-1">
+            <h2 class="text-xl font-semibold">Settings</h2>
+            <p class="text-sm text-plum-muted">Manage sampling settings and your Gemini API key.</p>
+          </header>
+          <div class="flex flex-col gap-3">
+            <div class="flex items-center justify-between text-sm">
+              <span>Gemini API key</span>
+              <span id="settingsKeyStatus" class="text-xs text-plum-muted"></span>
+            </div>
+            <input id="settingsKeyInput" type="password" placeholder="AIza..." class="rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/60" />
+            <button id="settingsRemoveKey" type="button" class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-sm text-raspberry hover:bg-raspberry/10">Remove key from this device</button>
+          </div>
+          <fieldset class="flex flex-col gap-4">
+            <legend class="text-sm font-semibold">Sampling</legend>
+            <label class="flex flex-col gap-1 text-sm">
+              <span>Temperature: <span id="tempValue"></span></span>
+              <input id="tempSlider" type="range" min="0" max="1.2" step="0.1" />
+            </label>
+            <label class="flex flex-col gap-1 text-sm">
+              <span>topP: <span id="topPValue"></span></span>
+              <input id="topPSlider" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label class="flex flex-col gap-1 text-sm">
+              <span>topK: <span id="topKValue"></span></span>
+              <input id="topKSlider" type="range" min="1" max="64" step="1" />
+            </label>
+            <button id="samplingReset" type="button" class="self-start rounded-full border border-plum-border/60 px-3 py-1 text-sm hover:bg-plum-surface-2">Reset to defaults</button>
+          </fieldset>
           <div class="flex justify-end gap-3">
-            <button value="cancel" class="rounded-full px-4 py-2 text-sm bg-plum-surface hover:bg-plum-surface-2 border border-plum-border/60">Cancel</button>
-            <button type="submit" class="rounded-full px-4 py-2 text-sm bg-raspberry text-white hover:bg-raspberry/90">Save</button>
+            <button type="button" id="settingsCancel" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm hover:bg-plum-surface-2">Cancel</button>
+            <button type="submit" class="rounded-full bg-peach text-plum px-4 py-2 text-sm font-semibold hover:bg-peach/80">Save</button>
           </div>
         </form>
       </dialog>
     `;
 
-    this.timelineEl = this.root.querySelector('#timeline');
-    this.keyStatusEl = this.root.querySelector('#keyStatus');
-    this.settingsBtn = this.root.querySelector('#settingsBtn');
-    this.settingsModal = this.root.querySelector('#settingsModal');
-    this.keyInput = this.root.querySelector('#keyInput');
-    this.clearKeyBtn = this.root.querySelector('#clearKeyBtn');
-
-    this.settingsBtn.addEventListener('click', () => {
-      if (this.settingsModal.open) return;
-      this.keyInput.value = this.state.apiKey;
-      this.settingsModal.showModal();
-    });
-
-    this.settingsModal.addEventListener('close', () => {
-      this.keyInput.value = this.state.apiKey;
-    });
-
-    this.settingsModal
-      .querySelector('form')
-      .addEventListener('submit', (event) => {
-        event.preventDefault();
-        const formData = new FormData(event.currentTarget);
-        const key = formData.get('geminiKey');
-        saveGeminiKey(key ?? '');
-        this.settingsModal.close();
-      });
-
-    this.clearKeyBtn.addEventListener('click', () => {
-      clearGeminiKey();
-      this.keyInput.value = '';
-    });
+    this.elements = {
+      keyStatus: this.root.querySelector('#keyStatus'),
+      keyBanner: this.root.querySelector('#keyBanner'),
+      bannerKeyInput: this.root.querySelector('#bannerKeyInput'),
+      bannerKeySave: this.root.querySelector('#bannerKeySave'),
+      settingsBtn: this.root.querySelector('#settingsBtn'),
+      settingsModal: this.root.querySelector('#settingsModal'),
+      settingsKeyInput: this.root.querySelector('#settingsKeyInput'),
+      settingsKeyStatus: this.root.querySelector('#settingsKeyStatus'),
+      settingsRemoveKey: this.root.querySelector('#settingsRemoveKey'),
+      settingsCancel: this.root.querySelector('#settingsCancel'),
+      tempSlider: this.root.querySelector('#tempSlider'),
+      topPSlider: this.root.querySelector('#topPSlider'),
+      topKSlider: this.root.querySelector('#topKSlider'),
+      tempValue: this.root.querySelector('#tempValue'),
+      topPValue: this.root.querySelector('#topPValue'),
+      topKValue: this.root.querySelector('#topKValue'),
+      samplingReset: this.root.querySelector('#samplingReset'),
+      mainFile: this.root.querySelector('#mainFile'),
+      mainPreview: this.root.querySelector('#mainPreview'),
+      purposeInput: this.root.querySelector('#purposeInput'),
+      firstNotesInput: this.root.querySelector('#firstNotesInput'),
+      refsContainer: this.root.querySelector('#refsContainer'),
+      btnFirst: this.root.querySelector('#btnFirst'),
+      btnRestart: this.root.querySelector('#btnRestart'),
+      firstHint: this.root.querySelector('#firstHint'),
+      regenBrief: this.root.querySelector('#regenBrief'),
+      roomBriefContent: this.root.querySelector('#roomBriefContent'),
+      iterations: this.root.querySelector('#iterations'),
+      generateBar: this.root.querySelector('#generateBar'),
+      selCount: this.root.querySelector('#selCount'),
+      roundGuidance: this.root.querySelector('#roundGuidance'),
+      btnGenerate: this.root.querySelector('#btnGenerate'),
+      finalBackdrop: this.root.querySelector('#finalBackdrop'),
+      finalModal: this.root.querySelector('#finalModal'),
+      finalClose: this.root.querySelector('#finalClose'),
+      finalCurrent: this.root.querySelector('#finalCurrent'),
+      finalCandidate: this.root.querySelector('#finalCandidate'),
+      finalCurrentNotes: this.root.querySelector('#finalCurrentNotes'),
+      finalCandidateNotes: this.root.querySelector('#finalCandidateNotes'),
+      finalKeep: this.root.querySelector('#finalKeep'),
+      finalReplace: this.root.querySelector('#finalReplace'),
+    };
   }
 
-  async bootstrapProject() {
-    const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
-    let project = await getProject(existingId);
-    if (!project) {
-      project = await ensureProject({ name: 'Room Session' });
-      localStorage.setItem(STORAGE_PROJECT_KEY, project.id);
+  bootstrapSampling() {
+    try {
+      const stored = window.localStorage.getItem(SAMPLING_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (
+          typeof parsed === 'object' &&
+          parsed &&
+          'temperature' in parsed &&
+          'topP' in parsed &&
+          'topK' in parsed
+        ) {
+          this.state.sampling = {
+            temperature: Number(parsed.temperature),
+            topP: Number(parsed.topP),
+            topK: Number(parsed.topK),
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to restore sampling settings', error);
     }
-    this.state.project = project;
+    this.updateSamplingUI();
+  }
+
+  saveSampling() {
+    try {
+      window.localStorage.setItem(
+        SAMPLING_STORAGE_KEY,
+        JSON.stringify(this.state.sampling)
+      );
+    } catch (error) {
+      console.warn('Unable to persist sampling settings', error);
+    }
   }
 
   bootstrapKey() {
     const key = readGeminiKey();
     this.state.apiKey = key;
-    this.client.setApiKey(key);
+    this.gemini.setApiKey(key);
     this.unsubscribeKey = onKeyChange(() => {
       const next = readGeminiKey();
       this.state.apiKey = next;
-      this.client.setApiKey(next);
+      this.gemini.setApiKey(next);
       this.renderKeyStatus();
-      this.render();
+      this.renderKeyBanner();
     });
   }
 
-  render() {
-    this.renderKeyStatus();
-    this.renderTimeline();
+  bindEvents() {
+    this.elements.bannerKeySave.addEventListener('click', () => {
+      const key = this.elements.bannerKeyInput.value.trim();
+      saveGeminiKey(key);
+      this.elements.bannerKeyInput.value = '';
+    });
+
+    this.elements.settingsBtn.addEventListener('click', () => {
+      this.openSettings();
+    });
+
+    this.elements.settingsModal
+      .querySelector('form')
+      .addEventListener('submit', (event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        const key = formData.get('settingsKeyInput');
+        saveGeminiKey(typeof key === 'string' ? key : '');
+        this.closeSettings();
+      });
+
+    this.elements.settingsCancel.addEventListener('click', () => {
+      this.closeSettings();
+    });
+
+    this.elements.settingsRemoveKey.addEventListener('click', () => {
+      clearGeminiKey();
+      this.elements.settingsKeyInput.value = '';
+      this.renderKeyStatus();
+      this.renderKeyBanner();
+    });
+
+    this.elements.tempSlider.addEventListener('input', () => {
+      this.state.sampling.temperature = Number(this.elements.tempSlider.value);
+      this.updateSamplingUI();
+      this.saveSampling();
+    });
+
+    this.elements.topPSlider.addEventListener('input', () => {
+      this.state.sampling.topP = Number(this.elements.topPSlider.value);
+      this.updateSamplingUI();
+      this.saveSampling();
+    });
+
+    this.elements.topKSlider.addEventListener('input', () => {
+      this.state.sampling.topK = Number(this.elements.topKSlider.value);
+      this.updateSamplingUI();
+      this.saveSampling();
+    });
+
+    this.elements.samplingReset.addEventListener('click', () => {
+      this.state.sampling = { ...DEFAULT_SAMPLING };
+      this.updateSamplingUI();
+      this.saveSampling();
+    });
+
+    this.elements.mainFile.addEventListener('change', (event) => {
+      this.handleMainFile(event).catch((error) => {
+        console.error(error);
+        alert('Failed to process main photo.');
+      });
+    });
+
+    this.elements.purposeInput.addEventListener('input', () => {
+      this.state.purpose = this.elements.purposeInput.value;
+      this.scheduleRoomBriefRegeneration();
+    });
+
+    this.elements.firstNotesInput.addEventListener('input', () => {
+      this.state.firstNotes = this.elements.firstNotesInput.value;
+      this.scheduleRoomBriefRegeneration();
+    });
+
+    this.elements.btnFirst.addEventListener('click', () => {
+      this.startFirstRound().catch((error) => {
+        console.error(error);
+        alert(error.message || 'Failed to start iteration.');
+      });
+    });
+
+    this.elements.btnRestart.addEventListener('click', () => {
+      if (
+        window.confirm(
+          'Restart will clear all generated images and selections. Keep base photo, purpose, references, room brief and settings?'
+        )
+      ) {
+        this.resetGeneratedState();
+      }
+    });
+
+    this.elements.btnGenerate.addEventListener('click', () => {
+      this.generateNextRound().catch((error) => {
+        console.error(error);
+        alert(error.message || 'Failed to generate next iteration.');
+      });
+    });
+
+    this.elements.regenBrief.addEventListener('click', () => {
+      this.refreshRoomBrief(true).catch((error) => {
+        console.error(error);
+        alert(error.message || 'Failed to regenerate room brief.');
+      });
+    });
+
+    this.elements.finalClose.addEventListener('click', () =>
+      this.closeFinalModal()
+    );
+    this.elements.finalBackdrop.addEventListener('click', () =>
+      this.closeFinalModal()
+    );
+    this.elements.finalKeep.addEventListener('click', () =>
+      this.closeFinalModal()
+    );
+    this.elements.finalReplace.addEventListener('click', () => {
+      if (this.state.candidate.imageUrl) {
+        this.state.final = { ...this.state.candidate };
+        this.closeFinalModal();
+        alert('Final image updated.');
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        this.closeFinalModal();
+        if (this.elements.settingsModal.open) {
+          this.closeSettings();
+        }
+      }
+    });
+
+    this.renderReferences();
   }
 
   renderKeyStatus() {
-    if (!this.keyStatusEl) return;
+    if (!this.elements.keyStatus) return;
     if (this.state.apiKey) {
-      this.keyStatusEl.textContent = 'Key stored locally';
-      this.keyStatusEl.classList.remove('bg-raspberry/20', 'text-raspberry');
+      this.elements.keyStatus.textContent = 'Key stored locally';
+      this.elements.keyStatus.classList.remove('text-raspberry');
     } else {
-      this.keyStatusEl.textContent = 'No API key';
-      this.keyStatusEl.classList.add('bg-raspberry/20', 'text-raspberry');
+      this.elements.keyStatus.textContent = 'No API key';
+      this.elements.keyStatus.classList.add('text-raspberry');
     }
-  }
-
-  renderTimeline() {
-    this.timelineEl.innerHTML = '';
-    this.timelineEl.appendChild(this.renderUploadCard());
-    if (!this.state.apiKey) {
-      this.timelineEl.appendChild(this.renderKeyBanner());
-    }
-    if (this.state.photo) {
-      this.timelineEl.appendChild(this.renderPhotoCard());
-      this.timelineEl.appendChild(this.renderAnalysisCard());
-    }
-    if (this.state.analysis) {
-      this.timelineEl.appendChild(this.renderAnalysisResults());
-      if (this.state.palette) {
-        this.timelineEl.appendChild(this.renderGalleryCard());
-      }
-    }
-    if (this.state.abVariants.length > 0) {
-      this.timelineEl.appendChild(this.renderABCard());
-    }
-    if (this.state.heroRenders.length > 0) {
-      this.timelineEl.appendChild(this.renderHeroCard());
-    }
-    if (this.state.quickWins) {
-      this.timelineEl.appendChild(this.renderInsightsCard());
-    }
-  }
-
-  renderUploadCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
-    card.innerHTML = `
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold">1. Upload your room photo</h2>
-          <p class="text-sm text-plum-muted">Use a single JPG or PNG. MoodCanvas stores the image locally and resizes a private thumbnail.</p>
-        </div>
-        ${this.state.photo ? `<button class="text-xs text-peach underline" id="replacePhoto">Replace</button>` : ''}
-      </div>
-      <label class="relative flex h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl2 border border-dashed border-peach/60 bg-plum-surface text-center text-plum-muted transition hover:border-peach hover:text-peach">
-        <input type="file" accept="image/jpeg,image/png" capture="environment" class="absolute inset-0 opacity-0" ${this.state.loading ? 'disabled' : ''} />
-        <span class="text-sm">Tap to upload</span>
-        <span class="text-xs">Long edge ≤ 2048px • Metadata preserved</span>
-      </label>
-    `;
-
-    const input = card.querySelector('input[type="file"]');
-    input.addEventListener('change', (event) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        this.importPhoto(file).catch((error) => this.reportError(error));
-      }
-    });
-
-    const replaceBtn = card.querySelector('#replacePhoto');
-    if (replaceBtn) {
-      replaceBtn.addEventListener('click', () => {
-        this.resetAfter('photo');
-      });
-    }
-
-    return card;
   }
 
   renderKeyBanner() {
-    const banner = document.createElement('section');
-    banner.className =
-      'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
-    banner.innerHTML = `
-      <div class="font-medium">Bring your own Google Gemini key</div>
-  <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
-      <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
-    `;
-    banner
-      .querySelector('#openSettings')
-      .addEventListener('click', () => this.settingsModal.showModal());
-    return banner;
+    if (!this.elements.keyBanner) return;
+    const hasKey = Boolean(this.state.apiKey);
+    this.elements.keyBanner.classList.toggle('hidden', hasKey);
   }
 
-  renderPhotoCard() {
-    const { photo } = this.state;
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">2. Confirm scope & intended function</h2>
-      <div class="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <div class="rounded-xl2 overflow-hidden border border-plum-border/40">
-          <img src="${photo.thumbUrl}" alt="Uploaded room" class="block w-full h-full object-cover" loading="lazy" />
-        </div>
-        <form class="flex flex-col gap-3" id="scopeForm">
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intended use</span>
-            <select name="function" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70">
-              ${SUPPORTED_ROOM_FUNCTIONS.map((fn) => `<option value="${fn}">${fn}</option>`).join('')}
-            </select>
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intervention scope (1–4)</span>
-            <input name="scope" type="number" min="1" max="4" value="2" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Notes for the designer</span>
-            <textarea name="notes" rows="3" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="Optional context"></textarea>
-          </label>
-          <button class="mt-2 self-start rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach" type="submit" ${this.state.loading ? 'disabled' : ''}>Run analysis</button>
-          ${this.state.warning ? `<p class="text-xs text-peach/80">${this.state.warning}</p>` : ''}
-        </form>
-      </div>
-    `;
-
-    const form = card.querySelector('#scopeForm');
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      const data = new FormData(form);
-      this.runAnalysis({
-        intendedUse: data.get('function'),
-        scope: Number.parseInt(data.get('scope'), 10) || 1,
-        notes: data.get('notes')?.toString() ?? '',
-      }).catch((error) => this.reportError(error));
-    });
-
-    return card;
-  }
-
-  renderAnalysisCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">3. Analysis progress</h2>
-      <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
-      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (120s timeout)</div>' : ''}
-      ${this.state.error && !this.state.analysis ? `<p class="text-sm text-raspberry">${this.state.error}</p>` : ''}
-    `;
-    return card;
-  }
-
-  renderAnalysisResults() {
-    const { analysis } = this.state;
-    const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
-
-    const paletteStatus = this.state.palette
-      ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
-      : '<span class="rounded-full bg-plum-border/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Awaiting pick</span>';
-
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">4. Room intelligence</h2>
-        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette exploration, and quick wins.</p>
-      </div>
-      <div class="grid gap-6 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">Inspiration pulse</h3>
-          <div class="flex flex-wrap gap-2">
-            ${analysis.usage_candidates
-              .slice(0, 3)
-              .map(
-                (item) =>
-                  `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`
-              )
-              .join('')}
-          </div>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
-              <p class="text-xs text-plum-muted mt-1">Pick one of the suggested palettes to continue.</p>
-            </div>
-            ${paletteStatus}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2" id="paletteGrid"></div>
-          ${!this.state.palette ? '<p class="text-xs text-peach/80">Select a palette to unlock the 10-style gallery.</p>' : ''}
-        </section>
-      </div>
-      <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-        <ol class="space-y-3 text-sm text-plum-muted">
-          ${(this.state.analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
-        </ol>
-      </section>
-    `;
-
-    const paletteGrid = card.querySelector('#paletteGrid');
-    if (paletteGrid) {
-      if (paletteOptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-plum-muted';
-        empty.textContent =
-          'No palette suggestions available. You can still proceed once a palette is selected later.';
-        paletteGrid.appendChild(empty);
-      } else {
-        paletteOptions.forEach((option, index) => {
-          paletteGrid.appendChild(this.renderPaletteOption(option, index));
-        });
-      }
+  openSettings() {
+    if (!this.elements.settingsModal.open) {
+      this.elements.settingsKeyInput.value = this.state.apiKey;
+      this.elements.settingsKeyStatus.textContent = this.state.apiKey
+        ? 'Key present on this device.'
+        : 'No key set.';
+      this.elements.settingsRemoveKey.disabled = !this.state.apiKey;
+      this.updateSamplingUI();
+      this.elements.settingsModal.showModal();
     }
-
-    return card;
   }
 
-  renderPaletteSwatch(label, info = {}) {
-    const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
-    const name =
-      typeof info.name === 'string' && info.name.trim().length > 0
-        ? info.name
-        : '—';
-    const finish = typeof info.finish === 'string' ? info.finish : '';
-    return `
-      <div class="flex flex-col gap-2 text-xs text-center">
-        <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
-          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
-            <rect width="100" height="100" fill="${hex}" />
-          </svg>
-        </div>
-        <div class="flex flex-col">
-          <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
-          <span>${name}</span>
-          <span>${hex}</span>
-          ${finish ? `<span>${finish}</span>` : ''}
-        </div>
-      </div>
-    `;
+  closeSettings() {
+    if (this.elements.settingsModal.open) {
+      this.elements.settingsModal.close();
+    }
   }
 
-  renderPaletteOption(palette, index) {
-    const isSelected = this.state.selectedPaletteIndex === index;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
-      isSelected
-        ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20'
-        : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
-    }`;
-
-    const statusBadge = isSelected
-      ? '<span class="rounded-full bg-peach/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/90">Selected</span>'
-      : index === 0
-        ? '<span class="rounded-full bg-plum-border/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Recommended</span>'
-        : '';
-
-    button.innerHTML = `
-      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-plum-muted">
-        <span>Palette ${index + 1}</span>
-        ${statusBadge}
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, palette?.[key] ?? {})).join('')}
-      </div>
-    `;
-
-    button.addEventListener('click', () => this.selectPalette(index));
-    return button;
+  updateSamplingUI() {
+    this.elements.tempSlider.value = String(this.state.sampling.temperature);
+    this.elements.topPSlider.value = String(this.state.sampling.topP);
+    this.elements.topKSlider.value = String(this.state.sampling.topK);
+    this.elements.tempValue.textContent =
+      this.state.sampling.temperature.toFixed(1);
+    this.elements.topPValue.textContent = this.state.sampling.topP.toFixed(2);
+    this.elements.topKValue.textContent = String(
+      Math.round(this.state.sampling.topK)
+    );
   }
 
-  selectPalette(index) {
-    const options = this.state.paletteOptions ?? [];
-    const palette = options[index];
-    if (!palette) {
+  async handleMainFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (this.state.main?.url) {
+      URL.revokeObjectURL(this.state.main.url);
+    }
+    const processed = await fileToResized(file, 2048, 0.9);
+    const thumbBase64 = await blobToBase64(processed.blob);
+    this.state.main = {
+      base64: thumbBase64,
+      mime: processed.mime,
+      url: processed.url,
+      width: processed.width,
+      height: processed.height,
+    };
+    this.elements.mainPreview.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = processed.url;
+    img.alt = 'Main room photo';
+    img.className = 'w-full rounded-xl2';
+    this.elements.mainPreview.appendChild(img);
+    this.elements.firstHint.textContent = 'Main photo ready.';
+  }
+
+  async handleReferenceFile(index, file) {
+    if (!file) {
+      const removed = this.state.references.splice(index, 1)[0];
+      if (removed?.url) {
+        URL.revokeObjectURL(removed.url);
+      }
+      this.renderReferences();
       return;
     }
-    this.state.selectedPaletteIndex = index;
-    this.state.palette = palette;
-    if (this.state.analysis) {
-      const updatedAnalysis = {
-        ...this.state.analysis,
-        palette_60_30_10: palette,
-      };
-      updatedAnalysis.render_gallery = normalizeRenderGallery(
-        updatedAnalysis,
-        palette
-      );
-      this.state.analysis = updatedAnalysis;
+    if (this.state.references[index]?.url) {
+      URL.revokeObjectURL(this.state.references[index].url);
     }
-    this.render();
-  }
-
-  renderGalleryCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const gallery = this.state.gallery;
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">5. 10-style gallery</h2>
-        <p class="text-sm text-plum-muted">Generate renders in parallel (pool=5). Tap to mark favorites for A/B exploration.</p>
-      </div>
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" id="galleryGrid"></div>
-      <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <button id="generateGallery" class="rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''}>Generate renders</button>
-        <div class="text-xs text-plum-muted">Favorites: ${this.state.favorites.size}/${MAX_FAVORITES}</div>
-      </div>
-    `;
-
-    const grid = card.querySelector('#galleryGrid');
-    const prompts = this.state.analysis.render_gallery;
-    const combined = prompts.map((prompt) => ({
-      prompt,
-      render: gallery.find((item) => item.style === prompt.style) ?? null,
-    }));
-    combined
-      .sort(
-        (a, b) =>
-          this.findStyleScore(b.prompt.style) -
-          this.findStyleScore(a.prompt.style)
-      )
-      .forEach(({ prompt, render }) => {
-        const tile = document.createElement('button');
-        tile.type = 'button';
-        tile.className = `group relative flex flex-col overflow-hidden rounded-xl2 border ${this.state.favorites.has(prompt.style) ? 'border-peach/80' : 'border-plum-border/30'} bg-plum-surface text-left transition`;
-        tile.dataset.style = prompt.style;
-        tile.innerHTML = `
-          <div class="relative aspect-[3/2] w-full overflow-hidden bg-plum-surface-2 flex items-center justify-center text-xs text-plum-muted">
-            ${render ? `<img src="${render.thumbUrl}" alt="${prompt.style} render" class="h-full w-full object-cover" loading="lazy" />` : 'Pending'}
-            <span class="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wide">${prompt.style}</span>
-          </div>
-          <div class="flex flex-col gap-1 p-3 text-xs">
-            <p class="text-plum-text font-medium">${prompt.focus}</p>
-            <p class="line-clamp-3 text-plum-muted">${prompt.guidance}</p>
-          </div>
-        `;
-        tile.addEventListener('click', () => this.toggleFavorite(prompt.style));
-        grid.appendChild(tile);
-      });
-
-    card.querySelector('#generateGallery').addEventListener('click', () => {
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      this.generateGalleryRenders().catch((error) => this.reportError(error));
-    });
-
-    if (this.state.favorites.size > 0) {
-      const confirm = document.createElement('div');
-      confirm.className =
-        'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
-      confirm.innerHTML = `
-        <div>Generate A/B mini-variants for ${this.state.favorites.size} favorite styles.</div>
-        <button class="rounded-full bg-coral/90 px-4 py-2 text-plum font-medium hover:bg-coral" ${this.state.loading ? 'disabled' : ''}>Launch A/B (${this.state.favorites.size * 2} images)</button>
-      `;
-      confirm
-        .querySelector('button')
-        .addEventListener('click', () => this.generateABVariants());
-      card.appendChild(confirm);
-    }
-
-    return card;
-  }
-
-  renderABCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">6. A/B mini-variants</h2>
-        <p class="text-sm text-plum-muted">Smart Mixed axes provide controlled variation for each favorite style.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-3" id="abGrid"></div>
-      <button class="self-end rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''} id="generateHeroes">Generate 3 hero renders</button>
-    `;
-
-    const grid = card.querySelector('#abGrid');
-    this.state.abVariants.forEach((variant) => {
-      const tile = document.createElement('article');
-      tile.className =
-        'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
-      tile.innerHTML = `
-        <div class="relative aspect-[3/2] bg-plum-surface-2">
-          ${variant.thumbUrl ? `<img src="${variant.thumbUrl}" alt="${variant.style} variant" class="h-full w-full object-cover" loading="lazy" />` : '<div class="flex h-full items-center justify-center text-xs text-plum-muted">Pending</div>'}
-        </div>
-        <div class="p-4 text-xs">
-          <div class="font-semibold text-plum-text">${variant.style} · ${variant.variant}</div>
-          <div class="text-plum-muted">${variant.focus}</div>
-        </div>
-      `;
-      grid.appendChild(tile);
-    });
-
-    card
-      .querySelector('#generateHeroes')
-      .addEventListener('click', () => this.generateHeroRenders());
-    return card;
-  }
-
-  renderHeroCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">7. Hero renders</h2>
-        <p class="text-sm text-plum-muted">Three flagship Smart Mixed renders at 1536×1024. Tap to open full size in a new tab.</p>
-      </div>
-      <div class="grid gap-4 lg:grid-cols-3" id="heroGrid"></div>
-    `;
-
-    const grid = card.querySelector('#heroGrid');
-    this.state.heroRenders.forEach((render) => {
-      const tile = document.createElement('a');
-      tile.href = render.fullUrl;
-      tile.target = '_blank';
-      tile.rel = 'noopener';
-      tile.className =
-        'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
-      tile.innerHTML = `
-        <img src="${render.thumbUrl}" alt="Hero render" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy" />
-        <span class="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wide">${render.variant}</span>
-      `;
-      grid.appendChild(tile);
-    });
-
-    return card;
-  }
-
-  renderInsightsCard() {
-    const card = document.createElement('section');
-    card.className =
-      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const quickWins = Array.isArray(this.state.quickWins)
-      ? this.state.quickWins
-      : [];
-    const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
-        <p class="text-sm text-plum-muted">Actionable instructions with neutral specifications only.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${quickWins.map((item) => `<li><span class="text-plum-text font-medium">${item.title}</span> — ${item.description}</li>`).join('')}
-          </ol>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${
-              list.length > 0
-                ? list
-                    .map(
-                      (item) =>
-                        `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
-                    )
-                    .join('')
-                : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'
-            }
-          </ol>
-        </section>
-      </div>
-    `;
-    return card;
-  }
-
-  async importPhoto(file) {
-    this.state.loading = true;
-    this.render();
-    const normalized = await normalizeImageFile(file);
-    const base64 = await blobToBase64(normalized.original);
-    const thumbUrl = URL.createObjectURL(normalized.thumb);
-    const fullUrl = URL.createObjectURL(normalized.original);
-    const projectId = this.state.project.id;
-
-    const originalRecord = await saveMedia(projectId, {
-      kind: 'input',
-      blob: normalized.original,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.original.size,
-    });
-
-    await saveMedia(projectId, {
-      kind: 'thumb',
-      relatedId: originalRecord.id,
-      blob: normalized.thumb,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.thumb.size,
-    });
-
-    await appendEvent(projectId, {
-      type: 'upload_image',
-      payload: { mediaId: originalRecord.id, name: file.name },
-    });
-
-    this.state.photo = {
+    const processed = await fileToResized(file, 2048, 0.9);
+    const base64 = await blobToBase64(processed.blob);
+    const reference = {
       base64,
-      thumbUrl,
-      fullUrl,
-      width: normalized.width,
-      height: normalized.height,
-      fileName: file.name,
+      mime: processed.mime,
+      url: processed.url,
+      name: file.name,
     };
-    this.resetAfter('analysis');
-    this.state.loading = false;
-    this.render();
+    this.state.references[index] = reference;
+    this.state.references = this.state.references.filter(Boolean).slice(0, 2);
+    this.renderReferences();
   }
 
-  resetAfter(step) {
-    if (step === 'photo') {
-      this.state.photo = null;
+  renderReferences() {
+    const container = this.elements.refsContainer;
+    container.innerHTML = '';
+    this.state.references.forEach((ref, index) => {
+      const wrapper = document.createElement('div');
+      wrapper.className =
+        'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-3 flex flex-col gap-3';
+      const preview = document.createElement('img');
+      preview.src = ref.url;
+      preview.alt = ref.name || `Reference ${index + 1}`;
+      preview.className = 'rounded-xl2 max-h-48 object-cover';
+      preview.addEventListener('click', () => window.open(ref.url, '_blank'));
+
+      const controls = document.createElement('div');
+      controls.className = 'flex flex-wrap items-center gap-2 text-sm';
+
+      if (index > 0) {
+        const moveUp = createButton(
+          'rounded-full border border-plum-border/60 px-3 py-1 text-xs hover:bg-plum-surface',
+          'Move up'
+        );
+        moveUp.addEventListener('click', () => {
+          const temp = this.state.references[index - 1];
+          this.state.references[index - 1] = this.state.references[index];
+          this.state.references[index] = temp;
+          this.renderReferences();
+        });
+        controls.appendChild(moveUp);
+      }
+
+      const remove = createButton(
+        'rounded-full border border-raspberry/60 px-3 py-1 text-xs text-raspberry hover:bg-raspberry/10',
+        'Remove'
+      );
+      remove.addEventListener('click', () => {
+        URL.revokeObjectURL(ref.url);
+        this.state.references.splice(index, 1);
+        this.renderReferences();
+      });
+      controls.appendChild(remove);
+
+      wrapper.append(preview, controls);
+      container.appendChild(wrapper);
+    });
+
+    if (this.state.references.length < 2) {
+      const addWrapper = document.createElement('div');
+      addWrapper.className =
+        'rounded-xl2 border border-dashed border-plum-border/60 bg-plum-surface-2 p-3 flex flex-col gap-2';
+      const label = document.createElement('span');
+      label.className = 'text-sm text-plum-muted';
+      label.textContent = `Add reference ${this.state.references.length + 1}`;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png';
+      input.className =
+        'rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm';
+      input.addEventListener('change', (event) => {
+        const file = event.target.files?.[0];
+        this.handleReferenceFile(this.state.references.length, file).catch(
+          (error) => {
+            console.error(error);
+            alert('Failed to process reference image.');
+          }
+        );
+      });
+      addWrapper.append(label, input);
+      container.appendChild(addWrapper);
     }
-    this.state.analysis = null;
-    this.state.gallery = [];
-    this.state.favorites = new Set();
-    this.state.abVariants = [];
-    this.state.heroRenders = [];
-    this.state.quickWins = null;
-    this.state.miniList = null;
-    this.state.palette = null;
-    this.state.paletteOptions = [];
-    this.state.selectedPaletteIndex = null;
-    this.render();
   }
 
-  async runAnalysis({ intendedUse, scope, notes }) {
-    this.state.loading = true;
-    this.state.error = null;
-    this.render();
+  scheduleRoomBriefRegeneration() {
+    if (!this.state.main) return;
+    if (this.roomBriefTimeout) {
+      clearTimeout(this.roomBriefTimeout);
+    }
+    this.roomBriefTimeout = setTimeout(() => {
+      this.refreshRoomBrief(false).catch((error) => console.error(error));
+    }, 600);
+  }
+
+  async refreshRoomBrief(forced) {
+    if (!this.state.main) {
+      throw new Error(
+        'Upload the main photo before generating the room brief.'
+      );
+    }
+    if (!this.state.apiKey) {
+      throw new Error(
+        'Add your Gemini API key before generating the room brief.'
+      );
+    }
+    this.state.roomBrief = {
+      ...this.state.roomBrief,
+      status: 'loading',
+      error: null,
+    };
+    this.renderRoomBrief();
     try {
-      const prompt = buildAnalysisPrompt({ intendedUse, scope, notes });
-      const controller = new AbortController();
-      this.controller = controller;
-      const data = await this.client.analyzeRoom({
-        imageBase64: this.state.photo.base64,
-        prompt,
-        signal: controller.signal,
+      const promptText = buildRoomBriefPrompt({
+        purpose: this.state.purpose,
+        notes: this.state.firstNotes,
       });
-      const normalizedAnalysis = { ...data };
-      const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
-      const defaultPalette =
-        paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
-      if (defaultPalette) {
-        normalizedAnalysis.palette_60_30_10 = defaultPalette;
-      }
-      normalizedAnalysis.palette_options = paletteOptions;
-      normalizedAnalysis.render_gallery = normalizeRenderGallery(
-        normalizedAnalysis,
-        defaultPalette
-      );
-      await saveArtifact(this.state.project.id, {
-        kind: 'analysis',
-        json: normalizedAnalysis,
+      const result = await this.gemini.generateRoomBrief({
+        promptText,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
       });
-      await appendEvent(this.state.project.id, {
-        type: 'analysis_done',
-        payload: { intendedUse, scope },
-      });
-      this.state.analysis = normalizedAnalysis;
-      this.state.quickWins = normalizedAnalysis.quick_wins;
-      this.state.paletteOptions = paletteOptions;
-      this.state.palette = null;
-      this.state.selectedPaletteIndex = null;
-      this.state.warning = evaluateScaleConfidence(
-        normalizedAnalysis.constraints?.scale_guesses
-      );
-    } catch (error) {
-      if (error.code === 'missing-key') {
-        this.settingsModal.showModal();
-      }
-      this.reportError(error);
-    } finally {
-      this.state.loading = false;
-      this.render();
-    }
-  }
-
-  async generateGalleryRenders() {
-    this.state.loading = true;
-    this.render();
-    const analysis = this.state.analysis;
-    const poolSize = 5;
-    const tasks = analysis.render_gallery.map((item) => async () => {
-      const assets = await this.renderAndStore({
-        prompt: item.prompt,
-        relatedId: item.style,
-      });
-      const entry = {
-        style: item.style,
-        prompt: item.prompt,
-        focus: item.focus,
-        thumbUrl: assets.thumbUrl,
-        fullUrl: assets.fullUrl,
+      this.state.roomBrief = {
+        status: 'ready',
+        paragraph: result.paragraph,
+        bullets: result.bullets,
+        raw: result.raw,
+        error: null,
       };
-      return entry;
-    });
+      if (forced) {
+        this.elements.firstHint.textContent = 'Room brief regenerated.';
+      }
+    } catch (error) {
+      this.state.roomBrief = {
+        status: 'error',
+        paragraph: '',
+        bullets: [],
+        raw: '',
+        error: error.message || 'Failed to generate room brief',
+      };
+      throw error;
+    } finally {
+      this.renderRoomBrief();
+    }
+  }
 
-    const results = [];
-    const queue = tasks.slice();
-    const workers = Array.from({ length: poolSize }, async () => {
-      while (queue.length > 0) {
-        const job = queue.shift();
-        try {
-          const result = await job();
-          results.push(result);
-          this.state.gallery = [...results];
-          this.render();
-        } catch (error) {
-          console.error('Render failed', error);
+  renderRoomBrief() {
+    const container = this.elements.roomBriefContent;
+    const brief = this.state.roomBrief;
+    container.innerHTML = '';
+    if (brief.status === 'loading') {
+      container.textContent = 'Generating room brief…';
+      return;
+    }
+    if (brief.status === 'error') {
+      container.innerHTML = `<span class="text-raspberry">${brief.error}</span>`;
+      return;
+    }
+    if (!brief.paragraph) {
+      container.textContent =
+        'Room brief will appear here after the first generation.';
+      return;
+    }
+    const paragraph = document.createElement('p');
+    paragraph.className = 'text-sm text-plum-text';
+    paragraph.textContent = brief.paragraph;
+    container.appendChild(paragraph);
+    if (brief.bullets?.length) {
+      const list = document.createElement('ul');
+      list.className = 'mt-3 list-disc space-y-1 pl-6 text-sm text-plum-muted';
+      brief.bullets.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      container.appendChild(list);
+    }
+  }
+
+  resetGeneratedState() {
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        if (tile.imageUrl) {
+          URL.revokeObjectURL(tile.imageUrl);
         }
-      }
+      });
     });
-
-    await Promise.all(workers);
-    await appendEvent(this.state.project.id, {
-      type: 'gallery_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
+    this.state.rounds = [];
+    this.state.final = { imageUrl: '', notes: '' };
+    this.state.candidate = { imageUrl: '', notes: '' };
+    this.state.selectedCount = 0;
+    this.elements.roundGuidance.value = '';
+    this.renderRounds();
+    this.updateGenerateBar();
   }
 
-  async generateABVariants() {
-    if (this.state.favorites.size === 0) return;
-    this.state.loading = true;
-    this.render();
-    const variants = [];
-    const axes = this.state.analysis.smart_mixed_axes;
-    for (const style of this.state.favorites) {
-      const basePrompt = this.state.analysis.render_gallery.find(
-        (item) => item.style === style
-      );
-      if (!basePrompt) continue;
-      const prompts = buildABPrompts(basePrompt.prompt, axes);
-      for (let index = 0; index < prompts.length; index += 1) {
-        try {
-          const assets = await this.renderAndStore({
-            prompt: prompts[index],
-            relatedId: `${style}-${index}`,
-          });
-          variants.push({
-            style,
-            variant: index === 0 ? axes.axisA.label : axes.axisB.label,
-            focus:
-              index === 0 ? axes.axisA.description : axes.axisB.description,
-            thumbUrl: assets.thumbUrl,
-            fullUrl: assets.fullUrl,
-          });
-        } catch (error) {
-          console.error('Variant render failed', error);
+  async startFirstRound() {
+    if (!this.state.main) {
+      throw new Error('Please upload the main photo first.');
+    }
+    await this.refreshRoomBrief(false);
+    this.resetGeneratedState();
+    await this.runRound();
+    this.elements.btnFirst.textContent = 'Restart';
+  }
+
+  async generateNextRound() {
+    if (this.state.selectedCount <= 0) {
+      return;
+    }
+    await this.runRound();
+    this.elements.roundGuidance.value = '';
+  }
+
+  getSelectedFavorites() {
+    const favorites = [];
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        if (tile.fav && tile.status === 'ok') {
+          favorites.push(tile);
         }
-      }
+      });
+    });
+    return favorites;
+  }
+
+  clearFavorites() {
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        tile.fav = false;
+      });
+    });
+    this.state.selectedCount = 0;
+  }
+
+  async runRound() {
+    if (this.state.runningRound) {
+      return;
     }
-    this.state.abVariants = variants;
-    await appendEvent(this.state.project.id, {
-      type: 'ab_generated',
-      payload: { count: variants.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  async generateHeroRenders() {
-    this.state.loading = true;
-    this.render();
-    const axes = this.state.analysis.smart_mixed_axes;
-    const basePrompt = this.state.analysis.render_gallery[0].prompt;
-    const prompts = buildHeroPrompts(basePrompt, axes);
-    const results = [];
-    for (let index = 0; index < prompts.length; index += 1) {
-      try {
-        const assets = await this.renderAndStore({
-          prompt: prompts[index],
-          relatedId: `hero-${index}`,
-        });
-        results.push({
-          variant: index === 0 ? 'Axis A' : index === 1 ? 'Axis B' : 'Blend',
-          thumbUrl: assets.thumbUrl,
-          fullUrl: assets.fullUrl,
-        });
-      } catch (error) {
-        console.error('Hero render failed', error);
-      }
+    if (!this.state.apiKey) {
+      throw new Error('Add your Gemini API key before generating iterations.');
     }
-    this.state.heroRenders = results;
-    this.state.quickWins = this.state.analysis.quick_wins;
-    this.state.miniList = buildMiniList(this.state.analysis);
-    await appendEvent(this.state.project.id, {
-      type: 'hero_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  toggleFavorite(style) {
-    if (this.state.favorites.has(style)) {
-      this.state.favorites.delete(style);
-    } else {
-      if (this.state.favorites.size >= MAX_FAVORITES) {
-        return;
-      }
-      this.state.favorites.add(style);
-    }
-    this.render();
-  }
-
-  async persistRenderAssets({ blob, thumb, relatedId }) {
-    const renderRecord = await saveMedia(this.state.project.id, {
-      kind: 'render',
-      relatedId,
-      blob,
-      mime: blob.type,
-      bytes: blob.size,
-    });
-    await saveMedia(this.state.project.id, {
-      kind: 'thumb',
-      relatedId: renderRecord.id,
-      blob: thumb,
-      mime: 'image/jpeg',
-      bytes: thumb.size,
-    });
-    return renderRecord;
-  }
-
-  async renderAndStore({ prompt, relatedId }) {
-    const [result] = await this.client.generateRenders({
-      prompt,
-      imageBase64: this.state.photo.base64,
-    });
-    const blob = base64ToBlob(result.data, result.mimeType);
-    const thumb = await createThumb(blob);
-    await this.persistRenderAssets({ blob, thumb, relatedId });
-    return {
-      fullUrl: URL.createObjectURL(blob),
-      thumbUrl: URL.createObjectURL(thumb),
+    this.state.runningRound = true;
+    const roundIndex = this.state.rounds.length + 1;
+    const round = {
+      index: roundIndex,
+      open: true,
+      tiles: Array.from({ length: 12 }, () => ({
+        status: 'loading',
+        fav: false,
+        note: '',
+        warnings: [],
+      })),
     };
+    this.state.rounds.push(round);
+    this.renderRounds();
+
+    const favorites = this.getSelectedFavorites();
+    const favoritesTextBlock = favoritesToTextBlock(favorites);
+    this.clearFavorites();
+    this.updateGenerateBar();
+
+    const references = this.state.references
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((ref) => ({ mime: ref.mime, base64: ref.base64 }));
+
+    const guidance = this.elements.roundGuidance.value;
+    round.guidance = guidance;
+    round.references = references;
+    round.favoritesTextBlock = favoritesTextBlock;
+    round.roomBriefText = formatRoomBriefText(this.state.roomBrief);
+    round.deck = diversityDeck();
+    try {
+      await runIterationBatch({
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        references,
+        roomBrief: round.roomBriefText,
+        purpose: this.state.purpose,
+        roundGuidance: guidance,
+        favoritesTextBlock,
+        sampling: this.state.sampling,
+        generateVariant: (payload) => this.gemini.generateVariant(payload),
+        onProgress: ({ index, ok, result, error }) => {
+          const tile = round.tiles[index];
+          if (ok) {
+            tile.status = 'ok';
+            tile.imageUrl = result.imageUrl;
+            tile.text = result.text;
+            tile.warnings = result.warnings ?? [];
+            tile.fav = false;
+            tile.note = '';
+          } else {
+            tile.status = 'error';
+            tile.error = error?.message || String(error);
+          }
+          this.renderRounds();
+        },
+        deck: round.deck,
+      });
+    } finally {
+      this.state.runningRound = false;
+    }
   }
 
-  findStyleScore(style) {
-    return (
-      this.state.analysis?.styles_top10.find((item) => item.style === style)
-        ?.score ?? 0
-    );
-  }
+  renderRounds() {
+    const container = this.elements.iterations;
+    container.innerHTML = '';
+    // auto-collapse older rounds except last two
+    this.state.rounds.forEach((round, index) => {
+      round.open = index >= this.state.rounds.length - 2;
+    });
 
-  reportError(error) {
-    console.error(error);
-    this.state.error = error.message ?? 'Unexpected error';
-    this.state.loading = false;
-    this.render();
-  }
-}
+    this.state.rounds.forEach((round, roundIdx) => {
+      const section = document.createElement('section');
+      section.className =
+        'rounded-xl2 border border-plum-border/40 bg-plum-surface px-4 py-4';
 
-async function createThumb(blob) {
-  const canvas = document.createElement('canvas');
-  const img = document.createElement('img');
-  img.src = await blobToDataUrl(blob);
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-  });
-  const scale = Math.min(384 / img.naturalWidth, 384 / img.naturalHeight, 1);
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (result) => {
-        if (result) {
-          resolve(result);
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between flex-wrap gap-2';
+      const title = document.createElement('h3');
+      title.className = 'text-lg font-semibold';
+      title.textContent = `Iteration #${round.index}`;
+      const toggle = createButton(
+        'rounded-full border border-plum-border/60 px-3 py-1 text-xs hover:bg-plum-surface-2',
+        round.open ? 'Collapse' : 'Expand'
+      );
+      toggle.addEventListener('click', () => {
+        round.open = !round.open;
+        this.renderRounds();
+      });
+      header.append(title, toggle);
+      section.appendChild(header);
+
+      const grid = document.createElement('div');
+      grid.className = round.open
+        ? 'mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3'
+        : 'hidden';
+
+      round.tiles.forEach((tile, tileIndex) => {
+        const card = document.createElement('div');
+        card.className =
+          'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-3 flex flex-col gap-3';
+        if (tile.status === 'loading') {
+          const skeleton = document.createElement('div');
+          skeleton.className = 'animate-pulse h-28 rounded-xl2 bg-plum-surface';
+          card.appendChild(skeleton);
+        } else if (tile.status === 'error') {
+          const message = document.createElement('p');
+          message.className = 'text-sm text-plum-muted';
+          message.textContent = `Generation failed: ${tile.error}`;
+          const retry = createButton(
+            'self-start rounded-full border border-plum-border/60 px-3 py-1 text-xs hover:bg-plum-surface',
+            'Retry'
+          );
+          retry.addEventListener('click', () => {
+            this.retryTile(roundIdx, tileIndex).catch((error) => {
+              console.error(error);
+              alert(error.message || 'Retry failed.');
+            });
+          });
+          card.append(message, retry);
         } else {
-          reject(new Error('Unable to create thumbnail'));
-        }
-      },
-      'image/jpeg',
-      0.85
-    );
-  });
-}
+          const img = document.createElement('img');
+          img.src = tile.imageUrl;
+          img.alt = `Iteration ${round.index} image`;
+          img.className = 'w-full rounded-xl2 cursor-pointer';
+          img.addEventListener('click', () =>
+            window.open(tile.imageUrl, '_blank')
+          );
 
-function evaluateScaleConfidence(guesses) {
-  if (!guesses) return null;
-  const confidences = [guesses.width_m, guesses.depth_m, guesses.height_m]
-    .map((item) => item?.confidence)
-    .filter((value) => typeof value === 'number');
-  if (confidences.length === 0) return null;
-  const min = Math.min(...confidences);
-  if (Number.isFinite(min) && min < 0.4) {
-    return 'Scale confidence is low; measurements may need manual verification.';
+          const controls = document.createElement('div');
+          controls.className =
+            'flex flex-wrap items-center justify-between gap-2 text-xs';
+
+          const favBtn = createButton(
+            tile.fav
+              ? 'rounded-full bg-peach text-plum px-3 py-1'
+              : 'rounded-full border border-plum-border/60 px-3 py-1 hover:bg-plum-surface',
+            tile.fav ? '★ Favorited' : '☆ Favorite'
+          );
+          favBtn.addEventListener('click', () => {
+            tile.fav = !tile.fav;
+            this.updateGenerateBar();
+            this.renderRounds();
+          });
+
+          const finalBtn = createButton(
+            'rounded-full border border-plum-border/60 px-3 py-1 hover:bg-plum-surface',
+            'Use as final'
+          );
+          finalBtn.addEventListener('click', () => {
+            this.startFinalCompare(tile).catch((error) => {
+              console.error(error);
+              alert(error.message || 'Finalization failed.');
+            });
+          });
+
+          controls.append(favBtn, finalBtn);
+
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.className = 'cursor-pointer text-sm text-plum-muted';
+          summary.textContent = 'Details';
+          const desc = document.createElement('p');
+          desc.className = 'mt-2 whitespace-pre-wrap text-sm text-plum-text';
+          desc.textContent = tile.text || '(No descriptor provided)';
+          details.append(summary, desc);
+
+          const warnings = document.createElement('div');
+          if (tile.warnings?.length) {
+            warnings.className = 'text-xs text-raspberry';
+            warnings.textContent = tile.warnings.join(' • ');
+          }
+
+          const note = document.createElement('textarea');
+          note.className = tile.fav
+            ? 'rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm'
+            : 'hidden';
+          note.rows = 2;
+          note.placeholder = 'Optional note for next round';
+          note.value = tile.note || '';
+          note.addEventListener('input', () => {
+            tile.note = note.value;
+          });
+
+          card.append(img, controls, details);
+          if (tile.warnings?.length) {
+            card.appendChild(warnings);
+          }
+          card.appendChild(note);
+        }
+
+        grid.appendChild(card);
+      });
+
+      section.appendChild(grid);
+      container.appendChild(section);
+    });
+
+    this.updateGenerateBar();
   }
-  return null;
+
+  updateGenerateBar() {
+    const favorites = this.getSelectedFavorites();
+    this.state.selectedCount = favorites.length;
+    this.elements.selCount.textContent = `${favorites.length} selected`;
+    this.elements.generateBar.classList.toggle(
+      'hidden',
+      favorites.length === 0
+    );
+  }
+
+  async retryTile(roundIndex, tileIndex) {
+    const round = this.state.rounds[roundIndex];
+    const tile = round.tiles[tileIndex];
+    tile.status = 'loading';
+    tile.error = undefined;
+    this.renderRounds();
+    try {
+      const deck = round.deck || diversityDeck();
+      const diversityHint = deck[tileIndex % deck.length];
+      const promptText = buildIterationPrompt({
+        roomBrief: round.roomBriefText,
+        purpose: this.state.purpose,
+        roundGuidance: round.guidance,
+        favoritesTextBlock: round.favoritesTextBlock,
+        diversityHint,
+      });
+      const result = await this.gemini.generateVariant({
+        promptText,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        references: round.references,
+        sampling: this.state.sampling,
+      });
+      tile.status = 'ok';
+      if (tile.imageUrl) {
+        URL.revokeObjectURL(tile.imageUrl);
+      }
+      tile.imageUrl = result.imageUrl;
+      tile.text = result.text;
+      tile.warnings = result.warnings ?? [];
+      tile.fav = false;
+      tile.note = '';
+    } catch (error) {
+      tile.status = 'error';
+      tile.error = error.message || String(error);
+    }
+    this.renderRounds();
+  }
+
+  async startFinalCompare(tile) {
+    if (!this.state.main) {
+      throw new Error('Main photo missing.');
+    }
+    const promptText = buildFinalizationPrompt();
+    const base64Child = await blobUrlToBase64(tile.imageUrl);
+    const references = this.state.references
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((ref) => ({ mime: ref.mime, base64: ref.base64 }));
+    const result = await this.gemini.finalizeHiRes({
+      promptText,
+      base64Main: this.state.main.base64,
+      mimeMain: this.state.main.mime,
+      base64Child,
+      mimeChild: 'image/jpeg',
+      references,
+      sampling: this.state.sampling,
+    });
+    this.state.candidate = {
+      imageUrl: result.imageUrl,
+      notes: result.text || '',
+    };
+    this.elements.finalCandidate.src = result.imageUrl;
+    this.elements.finalCandidateNotes.textContent = result.text || '';
+    this.elements.finalCurrent.src = this.state.final.imageUrl || tile.imageUrl;
+    this.elements.finalCurrentNotes.textContent =
+      this.state.final.notes || '(No build notes yet)';
+    this.openFinalModal();
+  }
+
+  openFinalModal() {
+    this.elements.finalBackdrop.classList.remove('hidden');
+    this.elements.finalModal.classList.remove('hidden');
+  }
+
+  closeFinalModal() {
+    this.elements.finalBackdrop.classList.add('hidden');
+    this.elements.finalModal.classList.add('hidden');
+  }
 }

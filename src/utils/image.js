@@ -18,6 +18,38 @@ export async function normalizeImageFile(file) {
   };
 }
 
+export async function fileToResized(file, maxSide = 2048, quality = 0.9) {
+  if (!(file instanceof Blob)) {
+    throw new TypeError('Expected a File or Blob instance');
+  }
+
+  const mime = file.type || 'image/jpeg';
+  const source = file.slice(0, file.size, mime);
+  const bitmap = await createImageBitmapWithOrientation(source);
+  const { width, height } = getBitmapSize(bitmap);
+  const longest = Math.max(width, height);
+  const scale = longest > maxSide ? maxSide / longest : 1;
+  const targetWidth = Math.round(width * scale);
+  const targetHeight = Math.round(height * scale);
+  const blob = await drawBitmapToBlob(
+    bitmap,
+    mime,
+    targetWidth,
+    targetHeight,
+    quality
+  );
+  const url = URL.createObjectURL(blob);
+  const base64 = await blobToBase64(blob);
+  return {
+    blob,
+    url,
+    base64,
+    mime,
+    width: targetWidth,
+    height: targetHeight,
+  };
+}
+
 async function createThumbnail(bitmap, mime) {
   const size = getBitmapSize(bitmap);
   const longest = Math.max(size.width, size.height);
@@ -89,6 +121,12 @@ export async function blobToDataUrl(blob) {
 export async function blobToBase64(blob) {
   const dataUrl = await blobToDataUrl(blob);
   return dataUrl.split(',')[1];
+}
+
+export async function blobUrlToBase64(url) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return blobToBase64(blob);
 }
 
 export function base64ToBlob(base64, mimeType = 'application/octet-stream') {

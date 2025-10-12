@@ -27,3 +27,10 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03 (iteration loop overhaul)
+
+- Replaced the chat-style flow with the Iteration 2 loop: ingest main photo + references, silent room brief, 12-up variant rounds, and hi-res finalization modal.
+- Implemented the new Gemini flows module with prompt builders, hybrid response parser, descriptor auto-repair, and diversity deck runner.
+- Rebuilt the UI shell in Tailwind (Plum–Peach) with sticky generate bar, per-tile favorites/notes, reference ordering, and BYOK + sampling settings modal.
+- Added focused unit tests for prompt builders, diversity deck, and response parser to cover missing descriptor repair and concurrency behaviour.
