@@ -29,7 +29,7 @@ export class GeminiClient {
       throw new Error('imageBase64 is required for analysis');
     }
 
-    const response = await this.#request({
+    const json = await this.generateContent({
       model: ANALYSIS_MODEL,
       body: {
         contents: [
@@ -54,8 +54,6 @@ export class GeminiClient {
       timeoutMs,
       signal,
     });
-
-    const json = await response.json();
     return parseAnalysisPayload(json);
   }
 
@@ -74,7 +72,7 @@ export class GeminiClient {
     }
 
     const jobs = Array.from({ length: count }, (_, index) =>
-      this.#request({
+      this.generateContent({
         model: RENDER_MODEL,
         timeoutMs,
         signal,
@@ -94,12 +92,26 @@ export class GeminiClient {
             },
           ],
         },
-      })
-        .then((response) => response.json())
-        .then((payload) => parseRenderPayload(payload))
+      }).then((payload) => parseRenderPayload(payload))
     );
 
     return Promise.all(jobs);
+  }
+
+  async generateContent({
+    model,
+    body,
+    timeoutMs = DEFAULT_RENDER_TIMEOUT_MS,
+    signal,
+  }) {
+    if (!model) {
+      throw new Error('model is required');
+    }
+    if (!body) {
+      throw new Error('body is required');
+    }
+    const response = await this.#request({ model, body, timeoutMs, signal });
+    return response.json();
   }
 
   async #request({ model, body, timeoutMs, signal }) {

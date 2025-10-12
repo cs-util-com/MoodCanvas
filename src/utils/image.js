@@ -1,20 +1,46 @@
 /* istanbul ignore file */
 
-export async function normalizeImageFile(file) {
+export async function normalizeImageFile(
+  file,
+  { maxLongEdge = 2048, quality = 0.9 } = {}
+) {
   if (!(file instanceof Blob)) {
     throw new TypeError('Expected a File or Blob instance');
   }
 
-  const blob = file.slice(0, file.size, file.type || 'image/jpeg');
-  const bitmap = await createImageBitmapWithOrientation(blob);
-  const original = await drawBitmapToBlob(bitmap, blob.type);
-  const thumb = await createThumbnail(bitmap, blob.type);
+  const mime = file.type || 'image/jpeg';
+  const original = file.slice(0, file.size, mime);
+  const bitmap = await createImageBitmapWithOrientation(original);
+  const { width, height } = getBitmapSize(bitmap);
+
+  const displayBlob = await drawBitmapToBlob(
+    bitmap,
+    mime,
+    width,
+    height,
+    quality
+  );
+
+  const longest = Math.max(width, height);
+  const resizeScale = longest > maxLongEdge ? maxLongEdge / longest : 1;
+  const targetWidth = Math.round(width * resizeScale);
+  const targetHeight = Math.round(height * resizeScale);
+  const resized = await drawBitmapToBlob(
+    bitmap,
+    mime,
+    targetWidth,
+    targetHeight,
+    quality
+  );
+  const thumb = await createThumbnail(bitmap, mime);
 
   return {
     original,
+    display: displayBlob,
+    resized,
     thumb,
-    width: bitmap.width,
-    height: bitmap.height,
+    width,
+    height,
   };
 }
 

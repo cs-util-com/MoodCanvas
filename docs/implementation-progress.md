@@ -27,3 +27,11 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-04 (Iteration loop overhaul)
+
+- Replaced the analysis-first workflow with the Iteration 2 spec: single photo ingest, optional drag-sort references, silent room brief regeneration, and a 12-tile iterative gallery powered by a diversity deck.
+- Added a sticky generate bar with guidance input that only appears once favorites are queued, plus modal compare-and-replace finalization using hi-res re-renders and build notes.
+- Implemented Gemini iteration utilities (room brief, variant, finalization parsers) with resilient text auto-repair and a pool-based runner, backed by unit tests covering parser edge cases and prompt construction.
+- Updated the silent room-brief prompt to match the Iteration 2 spec block format, including explicit input listings and constraint hints.
+- Converted the initial "Start" control into a dual-purpose restart button that clears generated iterations per spec, and we now reset queued favorites as soon as a new round begins so the next selection cycle starts cleanly.
