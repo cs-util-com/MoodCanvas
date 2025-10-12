@@ -39,3 +39,7 @@
 ## 2025-10-12 (gallery layout tweak)
 
 - Expanded the iteration timeline container to the full viewport width, forced iteration tiles into a single-column grid, and switched the preview frames to a 3:2 aspect ratio so each render scales tall enough to fill the available space on every screen size.
+
+## 2025-10-12 (tile details toggle)
+
+- Replaced the unused tile "Details" button with a click-to-expand description that shows only a short preview by default and reveals the full copy plus user notes on demand, reducing visual noise while keeping the annotation flow intact.

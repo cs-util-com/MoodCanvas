@@ -489,11 +489,29 @@ export class MoodCanvasApp {
         ?.addEventListener('click', () => {
           this.toggleFavorite(round.id, tileId);
         });
-      element
-        .querySelector('[data-action="details"]')
-        ?.addEventListener('click', () => {
-          element.classList.toggle('show-details');
+      const descriptionNode = element.querySelector('[data-action="details"]');
+      const detailsNode = element.querySelector('[data-role="details"]');
+      if (descriptionNode && detailsNode) {
+        const tile = this.findTile(tileId);
+        const { full, short } = this.prepareTileDescription(tile?.text);
+        descriptionNode.dataset.full = full;
+        descriptionNode.dataset.short = short;
+        descriptionNode.dataset.expanded = 'false';
+        descriptionNode.textContent = short;
+        descriptionNode.title = 'Click to toggle details';
+        descriptionNode.addEventListener('click', () => {
+          const expanded = descriptionNode.dataset.expanded === 'true';
+          if (expanded) {
+            descriptionNode.dataset.expanded = 'false';
+            descriptionNode.textContent = descriptionNode.dataset.short;
+            detailsNode.classList.add('hidden');
+          } else {
+            descriptionNode.dataset.expanded = 'true';
+            descriptionNode.textContent = descriptionNode.dataset.full;
+            detailsNode.classList.remove('hidden');
+          }
         });
+      }
       element
         .querySelector('[data-action="open"]')
         ?.addEventListener('click', () => {
@@ -542,6 +560,7 @@ export class MoodCanvasApp {
     if (tile.status === 'error') {
       baseClasses.push('border-raspberry/50');
     }
+    const { short: shortDescription } = this.prepareTileDescription(tile.text);
     const warnings = tile.warnings?.length
       ? `<div class="text-xs text-peach">${tile.warnings.join('; ')}</div>`
       : '';
@@ -562,15 +581,14 @@ export class MoodCanvasApp {
           <button data-action="open" class="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white">Open</button>
         </div>
         ${warnings}
-        <div class="text-xs text-plum-muted hidden space-y-2 show-in-parent">
-          <p class="text-sm text-plum-text">${tile.text || '(Descriptor pending)'}</p>
+        <p data-action="details" class="text-sm text-plum-text cursor-pointer" title="Click to toggle details">${shortDescription}</p>
+        <div data-role="details" class="hidden text-xs text-plum-muted space-y-2">
           <label class="flex flex-col gap-1">
             <span>User note to send forward (optional)</span>
             <textarea data-note="${tile.id}" class="rounded-xl2 border border-plum-border/40 bg-plum-surface-2 px-2 py-1 text-xs" rows="2" placeholder="e.g. Keep the curved sofa, soften the rug">${tile.note || ''}</textarea>
           </label>
         </div>
         <div class="flex flex-wrap gap-2 text-xs">
-          <button data-action="details" class="rounded-full border border-plum-border/50 px-3 py-1 text-plum-muted hover:bg-plum-surface-2">${tile.status === 'ok' ? 'Details' : 'Info'}</button>
           <button data-action="toggle" class="rounded-full ${tile.fav ? 'bg-peach text-plum' : 'border border-peach text-peach'} px-3 py-1">${tile.fav ? 'Favorited' : 'Favorite + queue'}</button>
           <button data-action="finalize" class="rounded-full border border-plum-border/60 px-3 py-1 text-plum-muted hover:bg-plum-surface-2">Use as final</button>
         </div>`;
@@ -636,6 +654,22 @@ export class MoodCanvasApp {
       this.finalCurrentNotes.textContent =
         this.state.final.notes || '(No build notes yet)';
     }
+  }
+
+  prepareTileDescription(text) {
+    const fallback = '(Descriptor pending)';
+    if (!text || !text.trim()) {
+      return { full: fallback, short: fallback };
+    }
+    const normalized = text.trim().replace(/\s+/g, ' ');
+    const words = normalized.split(' ');
+    if (words.length <= 12) {
+      return { full: normalized, short: normalized };
+    }
+    return {
+      full: normalized,
+      short: `${words.slice(0, 12).join(' ')}…`,
+    };
   }
 
   async importMainPhoto(file) {
