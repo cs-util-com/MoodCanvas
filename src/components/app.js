@@ -5,57 +5,50 @@ import {
   clearGeminiKey,
   onKeyChange,
 } from '../utils/key-store.js';
-import { GeminiClient } from '../utils/gemini-client.js';
-import { normalizeImageFile, blobToBase64, blobToDataUrl, base64ToBlob } from '../utils/image.js';
 import {
-  ensureProject,
-  getProject,
-  saveMedia,
-  saveArtifact,
-  appendEvent,
-} from '../utils/project-store.js';
-import { SUPPORTED_ROOM_FUNCTIONS } from '../constants/analysis-schema.js';
+  GeminiClient,
+  DEFAULT_SAMPLING,
+} from '../utils/gemini-client.js';
+import { normalizeImageFile, blobToBase64, blobToDataUrl } from '../utils/image.js';
+import { diversityDeck } from '../utils/diversity.js';
 import {
-  buildAnalysisPrompt,
-  buildABPrompts,
-  buildHeroPrompts,
-  buildMiniList,
-  normalizeRenderGallery,
+  buildRoomBriefPrompt,
+  buildIterationPrompt,
+  buildFinalizationPrompt,
+  stringifyFavorites,
 } from '../utils/prompts.js';
-import { ensurePaletteOptions } from '../utils/palette.js';
+import { runIterationBatch } from '../utils/iteration-runner.js';
 
-const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
-const MAX_FAVORITES = 3;
+const STORAGE_SAMPLING_KEY = 'moodcanvas.sampling.v2';
 
 export class MoodCanvasApp {
   constructor(root) {
     this.root = root;
     this.client = new GeminiClient();
     this.state = {
-      loading: false,
       apiKey: '',
-      project: null,
-      photo: null,
-      analysis: null,
-      gallery: [],
-      favorites: new Set(),
-      abVariants: [],
-      heroRenders: [],
-      quickWins: null,
-      miniList: null,
-      palette: null,
-      paletteOptions: [],
-      selectedPaletteIndex: null,
-      warning: null,
-      error: null,
+      sampling: loadSampling(),
+      main: null,
+      references: [],
+      purpose: '',
+      firstNotes: '',
+      roomBrief: null,
+      roomBriefDirty: false,
+      roomBriefLoading: false,
+      rounds: [],
+      selectedCount: 0,
+      roundGuidance: '',
+      isGenerating: false,
+      final: { imageUrl: '', notes: '' },
+      candidate: null,
     };
     this.unsubscribeKey = null;
-    this.controller = null;
+    this.dragIndex = null;
+    this.roomBriefRegenTimer = null;
   }
 
   async init() {
     this.renderShell();
-    await this.bootstrapProject();
     this.bootstrapKey();
     this.render();
   }
@@ -65,42 +58,127 @@ export class MoodCanvasApp {
       this.unsubscribeKey();
       this.unsubscribeKey = null;
     }
+    if (this.roomBriefRegenTimer) {
+      clearTimeout(this.roomBriefRegenTimer);
+      this.roomBriefRegenTimer = null;
+    }
   }
 
   renderShell() {
     this.root.innerHTML = `
       <div class="min-h-full flex flex-col">
         <header class="border-b border-plum-border/40 bg-plum-surface">
-          <div class="mx-auto w-full max-w-5xl px-6 py-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between">
             <div>
               <p class="text-peach uppercase tracking-[0.3em] text-xs font-semibold">MoodCanvas</p>
-              <h1 class="text-2xl md:text-3xl font-semibold">Interior Design Assistant</h1>
+              <h1 class="text-2xl md:text-3xl font-semibold">Iterative Interior Canvas</h1>
               <p class="text-sm text-plum-muted max-w-xl">
-                Upload a single empty-room photo, explore tailored styles, and collect actionable next steps without leaving your browser.
+                Upload your base room, explore twelve variants per round, and polish a hi-res final without leaving the browser.
               </p>
             </div>
             <div class="flex items-center gap-3">
               <span id="keyStatus" class="rounded-full border border-plum-border/40 px-3 py-1 text-xs uppercase tracking-widest text-plum-muted"></span>
-              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry text-white px-4 py-2 text-sm font-medium transition">
-                Settings
-              </button>
+              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry px-4 py-2 text-sm font-medium text-white transition">Settings</button>
             </div>
           </div>
         </header>
         <main class="flex-1">
-          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="timeline"></div>
+          <div class="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10">
+            <section class="rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6" id="ingestCard">
+              <div class="flex flex-col gap-2">
+                <h2 class="text-lg font-semibold">1. Prepare your session</h2>
+                <p class="text-sm text-plum-muted">Upload the base room photo, optional references, and intended use. Restart keeps the base assets but clears generated rounds.</p>
+              </div>
+              <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+                <div class="flex flex-col gap-4">
+                  <label class="relative flex h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl2 border border-dashed border-peach/60 bg-plum-surface text-center text-plum-muted transition hover:border-peach hover:text-peach">
+                    <input type="file" accept="image/jpeg,image/png" capture="environment" class="absolute inset-0 opacity-0" id="mainFile" />
+                    <span class="text-sm">Upload main room photo</span>
+                    <span class="text-xs">Long edge ≤ 2048px • Metadata preserved</span>
+                  </label>
+                  <div id="mainPreview" class="rounded-xl2 border border-plum-border/40 bg-plum-surface flex items-center justify-center text-xs text-plum-muted min-h-[6rem]"></div>
+                </div>
+                <div class="flex flex-col gap-4">
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span>Intended use</span>
+                    <input type="text" id="purposeInput" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="e.g., Living room sanctuary" />
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span>First round notes (optional)</span>
+                    <textarea id="firstNotes" rows="3" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="Constraints, goals, pain points"></textarea>
+                  </label>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-center justify-between text-sm">
+                      <span>Reference images (0–2)</span>
+                      <button type="button" id="addReference" class="text-xs text-peach underline">Add reference</button>
+                    </div>
+                    <div id="referenceList" class="flex flex-col gap-3"></div>
+                    <input type="file" accept="image/jpeg,image/png" class="hidden" id="referencePicker" />
+                  </div>
+                  <div class="flex flex-wrap gap-3 pt-2">
+                    <button type="button" id="btnFirst" class="rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach" disabled>Start generating first suggestions</button>
+                    <button type="button" id="btnRestart" class="rounded-full border border-plum-border/50 px-5 py-2 text-sm text-plum-muted hover:border-peach/60">Restart</button>
+                  </div>
+                </div>
+              </div>
+              <div id="keyBanner" class="hidden rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-4 text-sm text-raspberry">
+                <div class="font-medium mb-1">Bring your own Google Gemini key</div>
+                <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
+                <button class="mt-3 rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
+              </div>
+            </section>
+            <section class="rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4 hidden" id="roomBriefCard">
+              <div class="flex items-center justify-between">
+                <div>
+                  <h2 class="text-lg font-semibold">2. Room brief</h2>
+                  <p class="text-sm text-plum-muted">Silent context attached to every prompt.</p>
+                </div>
+                <span id="roomBriefStatus" class="text-xs text-plum-muted"></span>
+              </div>
+              <div id="roomBriefContent" class="space-y-3 text-sm text-plum-muted"></div>
+            </section>
+            <section class="flex flex-col gap-4" id="iterations"></section>
+          </div>
         </main>
+        <div id="generateBar" class="hidden border-t border-plum-border/40 bg-plum-surface px-6 py-4">
+          <div class="mx-auto flex w-full max-w-5xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <label class="flex w-full flex-col gap-1 text-sm md:max-w-xl">
+              <span>Guidance for next round</span>
+              <input type="text" id="roundGuidance" class="rounded-xl2 border border-plum-border/60 bg-plum-surface-2 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="One line to steer the next 12 variants" />
+            </label>
+            <div class="flex items-center gap-3">
+              <span id="selectedCount" class="text-xs text-plum-muted">0 selected</span>
+              <button type="button" id="btnGenerate" class="rounded-full bg-coral/90 px-5 py-2 text-sm font-medium text-plum hover:bg-coral disabled:opacity-50 disabled:cursor-not-allowed">Generate next iteration</button>
+            </div>
+          </div>
+        </div>
       </div>
       <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
         <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
-          <header>
+          <header class="flex flex-col gap-1">
             <h2 class="text-xl font-semibold">Settings</h2>
-            <p class="text-sm text-plum-muted">Manage your Google Gemini API key for on-device usage.</p>
+            <p class="text-sm text-plum-muted">Manage your Gemini key and sampling controls.</p>
           </header>
           <label class="flex flex-col gap-2 text-sm">
             <span>Gemini API key</span>
             <input id="keyInput" name="geminiKey" type="password" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="AIza..." />
           </label>
+          <fieldset class="grid gap-3 text-sm">
+            <legend class="text-xs uppercase tracking-wide text-plum-muted">Sampling</legend>
+            <label class="flex flex-col gap-1">
+              <span>Temperature</span>
+              <input type="number" step="0.05" min="0" max="1" id="tempInput" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span>topP</span>
+              <input type="number" step="0.05" min="0" max="1" id="topPInput" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span>topK</span>
+              <input type="number" min="1" id="topKInput" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
+            </label>
+            <button type="button" id="resetSampling" class="self-start rounded-full border border-plum-border/60 px-3 py-1 text-xs text-plum-muted hover:border-peach/60">Reset to defaults</button>
+          </fieldset>
           <div class="flex flex-col gap-3 text-xs text-plum-muted">
             <p>Bring your own key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="text-peach underline">Google AI Studio</a>. Keys are stored only in this browser.</p>
             <button type="button" id="clearKeyBtn" class="self-start rounded-full border border-raspberry/50 px-3 py-1 text-raspberry hover:bg-raspberry/10">Remove key from this device</button>
@@ -111,23 +189,157 @@ export class MoodCanvasApp {
           </div>
         </form>
       </dialog>
+      <div id="finalBackdrop" class="fixed inset-0 hidden items-center justify-center bg-black/70 px-4">
+        <div id="finalModal" class="w-full max-w-4xl rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-dialog">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-semibold">Compare & decide</h3>
+            <button type="button" id="finalClose" class="text-sm text-plum-muted hover:text-plum-text">Close</button>
+          </div>
+          <div class="mt-4 grid gap-4 md:grid-cols-2">
+            <div class="flex flex-col gap-2">
+              <span class="text-xs uppercase tracking-wide text-plum-muted">Current final</span>
+              <div class="rounded-xl2 border border-plum-border/40 bg-plum-surface flex items-center justify-center overflow-hidden aspect-[3/2]">
+                <img id="finalCurrent" alt="Current final" class="h-full w-full object-cover" />
+              </div>
+              <p id="finalCurrentNotes" class="text-sm text-plum-muted whitespace-pre-wrap"></p>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="text-xs uppercase tracking-wide text-plum-muted">Candidate</span>
+              <div class="rounded-xl2 border border-peach/40 bg-plum-surface flex items-center justify-center overflow-hidden aspect-[3/2]">
+                <img id="finalCandidate" alt="Candidate render" class="h-full w-full object-cover" />
+              </div>
+              <p id="finalCandidateNotes" class="text-sm text-plum-muted whitespace-pre-wrap"></p>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end gap-3">
+            <button type="button" id="finalKeep" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm text-plum-muted hover:border-peach/60">Keep current</button>
+            <button type="button" id="finalReplace" class="rounded-full bg-peach/90 px-4 py-2 text-sm font-medium text-plum hover:bg-peach">Replace with candidate</button>
+          </div>
+        </div>
+      </div>
     `;
 
-    this.timelineEl = this.root.querySelector('#timeline');
+    this.timelineEl = this.root.querySelector('#iterations');
+    this.mainInput = this.root.querySelector('#mainFile');
+    this.mainPreview = this.root.querySelector('#mainPreview');
+    this.purposeInput = this.root.querySelector('#purposeInput');
+    this.firstNotesInput = this.root.querySelector('#firstNotes');
+    this.referenceList = this.root.querySelector('#referenceList');
+    this.referencePicker = this.root.querySelector('#referencePicker');
+    this.addReferenceBtn = this.root.querySelector('#addReference');
+    this.btnFirst = this.root.querySelector('#btnFirst');
+    this.btnRestart = this.root.querySelector('#btnRestart');
+    this.keyBanner = this.root.querySelector('#keyBanner');
+    this.openSettingsBtn = this.root.querySelector('#openSettings');
+    this.roomBriefCard = this.root.querySelector('#roomBriefCard');
+    this.roomBriefContent = this.root.querySelector('#roomBriefContent');
+    this.roomBriefStatus = this.root.querySelector('#roomBriefStatus');
     this.keyStatusEl = this.root.querySelector('#keyStatus');
     this.settingsBtn = this.root.querySelector('#settingsBtn');
     this.settingsModal = this.root.querySelector('#settingsModal');
     this.keyInput = this.root.querySelector('#keyInput');
     this.clearKeyBtn = this.root.querySelector('#clearKeyBtn');
+    this.tempInput = this.root.querySelector('#tempInput');
+    this.topPInput = this.root.querySelector('#topPInput');
+    this.topKInput = this.root.querySelector('#topKInput');
+    this.resetSamplingBtn = this.root.querySelector('#resetSampling');
+    this.generateBar = this.root.querySelector('#generateBar');
+    this.roundGuidanceInput = this.root.querySelector('#roundGuidance');
+    this.selectedCountEl = this.root.querySelector('#selectedCount');
+    this.btnGenerate = this.root.querySelector('#btnGenerate');
+    this.finalBackdrop = this.root.querySelector('#finalBackdrop');
+    this.finalModal = this.root.querySelector('#finalModal');
+    this.finalClose = this.root.querySelector('#finalClose');
+    this.finalCurrent = this.root.querySelector('#finalCurrent');
+    this.finalCurrentNotes = this.root.querySelector('#finalCurrentNotes');
+    this.finalCandidate = this.root.querySelector('#finalCandidate');
+    this.finalCandidateNotes = this.root.querySelector('#finalCandidateNotes');
+    this.finalKeep = this.root.querySelector('#finalKeep');
+    this.finalReplace = this.root.querySelector('#finalReplace');
+
+    this.mainInput.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      this.importMainPhoto(file).catch((error) => this.reportError(error));
+    });
+
+    this.addReferenceBtn.addEventListener('click', () => {
+      this.referencePicker.value = '';
+      this.referencePicker.click();
+    });
+
+    this.referencePicker.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      this.addReference(file).catch((error) => this.reportError(error));
+    });
+
+    this.referenceList.addEventListener('dragstart', (event) => {
+      const target = event.target.closest('[data-index]');
+      if (!target) return;
+      this.dragIndex = Number.parseInt(target.dataset.index, 10);
+      event.dataTransfer.effectAllowed = 'move';
+    });
+
+    this.referenceList.addEventListener('dragover', (event) => {
+      if (this.dragIndex == null) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    });
+
+    this.referenceList.addEventListener('drop', (event) => {
+      if (this.dragIndex == null) return;
+      event.preventDefault();
+      const target = event.target.closest('[data-index]');
+      if (!target) return;
+      const dropIndex = Number.parseInt(target.dataset.index, 10);
+      this.reorderReferences(this.dragIndex, dropIndex);
+      this.dragIndex = null;
+    });
+
+    this.referenceList.addEventListener('dragend', () => {
+      this.dragIndex = null;
+    });
+
+    this.referenceList.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-remove]');
+      if (!button) return;
+      const index = Number.parseInt(button.dataset.remove, 10);
+      this.removeReference(index);
+    });
+
+    this.purposeInput.addEventListener('input', () => {
+      this.state.purpose = this.purposeInput.value;
+      this.markRoomBriefDirty();
+    });
+
+    this.firstNotesInput.addEventListener('input', () => {
+      this.state.firstNotes = this.firstNotesInput.value;
+      this.markRoomBriefDirty();
+    });
+
+    this.btnFirst.addEventListener('click', () => {
+      this.startInitialRound().catch((error) => this.reportError(error));
+    });
+
+    this.btnRestart.addEventListener('click', () => {
+      this.handleRestart();
+    });
 
     this.settingsBtn.addEventListener('click', () => {
       if (this.settingsModal.open) return;
-      this.keyInput.value = this.state.apiKey;
+      this.populateSettingsForm();
+      this.settingsModal.showModal();
+    });
+
+    this.openSettingsBtn.addEventListener('click', () => {
+      if (this.settingsModal.open) return;
+      this.populateSettingsForm();
       this.settingsModal.showModal();
     });
 
     this.settingsModal.addEventListener('close', () => {
-      this.keyInput.value = this.state.apiKey;
+      this.populateSettingsForm();
     });
 
     this.settingsModal.querySelector('form').addEventListener('submit', (event) => {
@@ -135,6 +347,11 @@ export class MoodCanvasApp {
       const formData = new FormData(event.currentTarget);
       const key = formData.get('geminiKey');
       saveGeminiKey(key ?? '');
+      this.saveSampling({
+        temperature: Number.parseFloat(this.tempInput.value),
+        topP: Number.parseFloat(this.topPInput.value),
+        topK: Number.parseInt(this.topKInput.value, 10),
+      });
       this.settingsModal.close();
     });
 
@@ -142,22 +359,46 @@ export class MoodCanvasApp {
       clearGeminiKey();
       this.keyInput.value = '';
     });
-  }
 
-  async bootstrapProject() {
-    const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
-    let project = await getProject(existingId);
-    if (!project) {
-      project = await ensureProject({ name: 'Room Session' });
-      localStorage.setItem(STORAGE_PROJECT_KEY, project.id);
-    }
-    this.state.project = project;
+    this.resetSamplingBtn.addEventListener('click', () => {
+      this.saveSampling({ ...DEFAULT_SAMPLING });
+      this.populateSettingsForm();
+    });
+
+    this.roundGuidanceInput.addEventListener('input', () => {
+      this.state.roundGuidance = this.roundGuidanceInput.value;
+    });
+
+    this.btnGenerate.addEventListener('click', () => {
+      if (this.state.selectedCount <= 0) return;
+      this.startNextRound().catch((error) => this.reportError(error));
+    });
+
+    this.finalClose.addEventListener('click', () => this.closeFinalModal());
+    this.finalBackdrop.addEventListener('click', (event) => {
+      if (event.target === this.finalBackdrop) {
+        this.closeFinalModal();
+      }
+    });
+    this.finalKeep.addEventListener('click', () => this.closeFinalModal());
+    this.finalReplace.addEventListener('click', () => {
+      if (this.state.candidate) {
+        this.state.final = { ...this.state.candidate };
+      }
+      this.closeFinalModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        this.closeFinalModal();
+      }
+    });
   }
 
   bootstrapKey() {
     const key = readGeminiKey();
     this.state.apiKey = key;
     this.client.setApiKey(key);
+    this.renderKeyStatus();
     this.unsubscribeKey = onKeyChange(() => {
       const next = readGeminiKey();
       this.state.apiKey = next;
@@ -168,8 +409,12 @@ export class MoodCanvasApp {
   }
 
   render() {
-    this.renderKeyStatus();
-    this.renderTimeline();
+    this.renderMainPreview();
+    this.renderReferences();
+    this.renderRoomBrief();
+    this.renderRounds();
+    this.updateSelectedCount();
+    this.updateGenerateBarState();
   }
 
   renderKeyStatus() {
@@ -181,744 +426,548 @@ export class MoodCanvasApp {
       this.keyStatusEl.textContent = 'No API key';
       this.keyStatusEl.classList.add('bg-raspberry/20', 'text-raspberry');
     }
-  }
-
-  renderTimeline() {
-    this.timelineEl.innerHTML = '';
-    this.timelineEl.appendChild(this.renderUploadCard());
-    if (!this.state.apiKey) {
-      this.timelineEl.appendChild(this.renderKeyBanner());
-    }
-    if (this.state.photo) {
-      this.timelineEl.appendChild(this.renderPhotoCard());
-      this.timelineEl.appendChild(this.renderAnalysisCard());
-    }
-    if (this.state.analysis) {
-      this.timelineEl.appendChild(this.renderAnalysisResults());
-      if (this.state.palette) {
-        this.timelineEl.appendChild(this.renderGalleryCard());
-      }
-    }
-    if (this.state.abVariants.length > 0) {
-      this.timelineEl.appendChild(this.renderABCard());
-    }
-    if (this.state.heroRenders.length > 0) {
-      this.timelineEl.appendChild(this.renderHeroCard());
-    }
-    if (this.state.quickWins) {
-      this.timelineEl.appendChild(this.renderInsightsCard());
+    if (this.keyBanner) {
+      this.keyBanner.classList.toggle('hidden', Boolean(this.state.apiKey));
     }
   }
 
-  renderUploadCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
-    card.innerHTML = `
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold">1. Upload your room photo</h2>
-          <p class="text-sm text-plum-muted">Use a single JPG or PNG. MoodCanvas stores the image locally and resizes a private thumbnail.</p>
-        </div>
-        ${this.state.photo ? `<button class="text-xs text-peach underline" id="replacePhoto">Replace</button>` : ''}
-      </div>
-      <label class="relative flex h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl2 border border-dashed border-peach/60 bg-plum-surface text-center text-plum-muted transition hover:border-peach hover:text-peach">
-        <input type="file" accept="image/jpeg,image/png" capture="environment" class="absolute inset-0 opacity-0" ${this.state.loading ? 'disabled' : ''} />
-        <span class="text-sm">Tap to upload</span>
-        <span class="text-xs">Long edge ≤ 2048px • Metadata preserved</span>
-      </label>
-    `;
-
-    const input = card.querySelector('input[type="file"]');
-    input.addEventListener('change', (event) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        this.importPhoto(file).catch((error) => this.reportError(error));
-      }
-    });
-
-    const replaceBtn = card.querySelector('#replacePhoto');
-    if (replaceBtn) {
-      replaceBtn.addEventListener('click', () => {
-        this.resetAfter('photo');
-      });
-    }
-
-    return card;
-  }
-
-  renderKeyBanner() {
-    const banner = document.createElement('section');
-    banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
-    banner.innerHTML = `
-      <div class="font-medium">Bring your own Google Gemini key</div>
-  <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
-      <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
-    `;
-    banner.querySelector('#openSettings').addEventListener('click', () => this.settingsModal.showModal());
-    return banner;
-  }
-
-  renderPhotoCard() {
-    const { photo } = this.state;
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">2. Confirm scope & intended function</h2>
-      <div class="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <div class="rounded-xl2 overflow-hidden border border-plum-border/40">
-          <img src="${photo.thumbUrl}" alt="Uploaded room" class="block w-full h-full object-cover" loading="lazy" />
-        </div>
-        <form class="flex flex-col gap-3" id="scopeForm">
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intended use</span>
-            <select name="function" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70">
-              ${SUPPORTED_ROOM_FUNCTIONS.map((fn) => `<option value="${fn}">${fn}</option>`).join('')}
-            </select>
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intervention scope (1–4)</span>
-            <input name="scope" type="number" min="1" max="4" value="2" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Notes for the designer</span>
-            <textarea name="notes" rows="3" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="Optional context"></textarea>
-          </label>
-          <button class="mt-2 self-start rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach" type="submit" ${this.state.loading ? 'disabled' : ''}>Run analysis</button>
-          ${this.state.warning ? `<p class="text-xs text-peach/80">${this.state.warning}</p>` : ''}
-        </form>
-      </div>
-    `;
-
-    const form = card.querySelector('#scopeForm');
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      const data = new FormData(form);
-      this.runAnalysis({
-        intendedUse: data.get('function'),
-        scope: Number.parseInt(data.get('scope'), 10) || 1,
-        notes: data.get('notes')?.toString() ?? '',
-      }).catch((error) => this.reportError(error));
-    });
-
-    return card;
-  }
-
-  renderAnalysisCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">3. Analysis progress</h2>
-      <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
-      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (120s timeout)</div>' : ''}
-      ${this.state.error && !this.state.analysis ? `<p class="text-sm text-raspberry">${this.state.error}</p>` : ''}
-    `;
-    return card;
-  }
-
-  renderAnalysisResults() {
-    const { analysis } = this.state;
-    const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
-
-    const paletteStatus = this.state.palette
-      ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
-      : '<span class="rounded-full bg-plum-border/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Awaiting pick</span>';
-
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">4. Room intelligence</h2>
-        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette exploration, and quick wins.</p>
-      </div>
-      <div class="grid gap-6 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">Inspiration pulse</h3>
-          <div class="flex flex-wrap gap-2">
-            ${analysis.usage_candidates.slice(0, 3).map((item) => `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`).join('')}
-          </div>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
-              <p class="text-xs text-plum-muted mt-1">Pick one of the suggested palettes to continue.</p>
-            </div>
-            ${paletteStatus}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2" id="paletteGrid"></div>
-          ${!this.state.palette ? '<p class="text-xs text-peach/80">Select a palette to unlock the 10-style gallery.</p>' : ''}
-        </section>
-      </div>
-      <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-        <ol class="space-y-3 text-sm text-plum-muted">
-          ${(this.state.analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
-        </ol>
-      </section>
-    `;
-
-    const paletteGrid = card.querySelector('#paletteGrid');
-    if (paletteGrid) {
-      if (paletteOptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-plum-muted';
-        empty.textContent = 'No palette suggestions available. You can still proceed once a palette is selected later.';
-        paletteGrid.appendChild(empty);
-      } else {
-        paletteOptions.forEach((option, index) => {
-          paletteGrid.appendChild(this.renderPaletteOption(option, index));
-        });
-      }
-    }
-
-    return card;
-  }
-
-  renderPaletteSwatch(label, info = {}) {
-    const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
-    const name = typeof info.name === 'string' && info.name.trim().length > 0 ? info.name : '—';
-    const finish = typeof info.finish === 'string' ? info.finish : '';
-    return `
-      <div class="flex flex-col gap-2 text-xs text-center">
-        <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
-          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
-            <rect width="100" height="100" fill="${hex}" />
-          </svg>
-        </div>
-        <div class="flex flex-col">
-          <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
-          <span>${name}</span>
-          <span>${hex}</span>
-          ${finish ? `<span>${finish}</span>` : ''}
-        </div>
-      </div>
-    `;
-  }
-
-  renderPaletteOption(palette, index) {
-    const isSelected = this.state.selectedPaletteIndex === index;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
-      isSelected ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20' : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
-    }`;
-
-    const statusBadge = isSelected
-      ? '<span class="rounded-full bg-peach/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/90">Selected</span>'
-      : index === 0
-        ? '<span class="rounded-full bg-plum-border/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Recommended</span>'
-        : '';
-
-    button.innerHTML = `
-      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-plum-muted">
-        <span>Palette ${index + 1}</span>
-        ${statusBadge}
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, palette?.[key] ?? {})).join('')}
-      </div>
-    `;
-
-    button.addEventListener('click', () => this.selectPalette(index));
-    return button;
-  }
-
-  selectPalette(index) {
-    const options = this.state.paletteOptions ?? [];
-    const palette = options[index];
-    if (!palette) {
+  renderMainPreview() {
+    if (!this.mainPreview) return;
+    if (!this.state.main) {
+      this.mainPreview.innerHTML = '<p>No photo uploaded yet.</p>';
+      this.btnFirst.disabled = true;
       return;
     }
-    this.state.selectedPaletteIndex = index;
-    this.state.palette = palette;
-    if (this.state.analysis) {
-      const updatedAnalysis = {
-        ...this.state.analysis,
-        palette_60_30_10: palette,
-      };
-      updatedAnalysis.render_gallery = normalizeRenderGallery(updatedAnalysis, palette);
-      this.state.analysis = updatedAnalysis;
-    }
-    this.render();
+    this.mainPreview.innerHTML = `<img src="${this.state.main.url}" alt="Main room" class="max-h-48 rounded-xl2 object-contain" />`;
+    this.btnFirst.disabled = false;
   }
 
-  renderGalleryCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const gallery = this.state.gallery;
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">5. 10-style gallery</h2>
-        <p class="text-sm text-plum-muted">Generate renders in parallel (pool=5). Tap to mark favorites for A/B exploration.</p>
-      </div>
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" id="galleryGrid"></div>
-      <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <button id="generateGallery" class="rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''}>Generate renders</button>
-        <div class="text-xs text-plum-muted">Favorites: ${this.state.favorites.size}/${MAX_FAVORITES}</div>
-      </div>
+  renderReferences() {
+    if (!this.referenceList) return;
+    this.referenceList.innerHTML = '';
+    this.state.references.forEach((ref, index) => {
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-3';
+      item.dataset.index = String(index);
+      item.draggable = true;
+      item.innerHTML = `
+        <img src="${ref.url}" alt="Reference ${index + 1}" class="h-16 w-16 rounded-xl2 object-cover" />
+        <div class="flex flex-1 flex-col gap-1 text-xs text-plum-muted">
+          <span>Reference ${index + 1}</span>
+          <span>${ref.mime}</span>
+        </div>
+        <button type="button" class="text-xs text-peach underline" data-remove="${index}">Remove</button>
+      `;
+      this.referenceList.appendChild(item);
+    });
+    this.addReferenceBtn.disabled = this.state.references.length >= 2;
+  }
+
+  renderRoomBrief() {
+    if (!this.roomBriefCard) return;
+    if (!this.state.roomBrief && !this.state.roomBriefLoading) {
+      this.roomBriefCard.classList.add('hidden');
+      return;
+    }
+    this.roomBriefCard.classList.remove('hidden');
+    if (this.state.roomBriefLoading) {
+      this.roomBriefStatus.textContent = 'Generating…';
+      this.roomBriefContent.innerHTML = '<p class="text-sm text-plum-muted">Calling Gemini to build the brief.</p>';
+      return;
+    }
+    this.roomBriefStatus.textContent = this.state.roomBriefDirty ? 'Needs refresh' : 'Ready';
+    const { paragraph, bullets } = this.state.roomBrief;
+    const list = Array.isArray(bullets) ? bullets : [];
+    const bulletList = list.length
+      ? `<ul class="list-disc space-y-2 pl-5">${list.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : '<p class="text-sm text-plum-muted">No constraints provided.</p>';
+    this.roomBriefContent.innerHTML = `
+      <p class="text-sm text-plum-text whitespace-pre-wrap">${escapeHtml(paragraph)}</p>
+      ${bulletList}
     `;
+  }
 
-    const grid = card.querySelector('#galleryGrid');
-    const prompts = this.state.analysis.render_gallery;
-    const combined = prompts.map((prompt) => ({ prompt, render: gallery.find((item) => item.style === prompt.style) ?? null }));
-    combined
-      .sort((a, b) => this.findStyleScore(b.prompt.style) - this.findStyleScore(a.prompt.style))
-      .forEach(({ prompt, render }) => {
-        const tile = document.createElement('button');
-        tile.type = 'button';
-        tile.className = `group relative flex flex-col overflow-hidden rounded-xl2 border ${this.state.favorites.has(prompt.style) ? 'border-peach/80' : 'border-plum-border/30'} bg-plum-surface text-left transition`;
-        tile.dataset.style = prompt.style;
-        tile.innerHTML = `
-          <div class="relative aspect-[3/2] w-full overflow-hidden bg-plum-surface-2 flex items-center justify-center text-xs text-plum-muted">
-            ${render ? `<img src="${render.thumbUrl}" alt="${prompt.style} render" class="h-full w-full object-cover" loading="lazy" />` : 'Pending'}
-            <span class="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wide">${prompt.style}</span>
-          </div>
-          <div class="flex flex-col gap-1 p-3 text-xs">
-            <p class="text-plum-text font-medium">${prompt.focus}</p>
-            <p class="line-clamp-3 text-plum-muted">${prompt.guidance}</p>
-          </div>
-        `;
-        tile.addEventListener('click', () => this.toggleFavorite(prompt.style));
-        grid.appendChild(tile);
-      });
-
-    card.querySelector('#generateGallery').addEventListener('click', () => {
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
+  renderRounds() {
+    if (!this.timelineEl) return;
+    this.timelineEl.innerHTML = '';
+    if (this.state.rounds.length === 0) {
+      return;
+    }
+    const openRounds = this.state.rounds
+      .map((round, index) => ({ round, index }))
+      .filter((entry) => entry.round.open);
+    if (openRounds.length > 2) {
+      openRounds
+        .sort((a, b) => a.index - b.index)
+        .slice(0, openRounds.length - 2)
+        .forEach((entry) => {
+          entry.round.open = false;
+        });
+    }
+    this.state.rounds.forEach((round, index) => {
+      if (typeof round.open !== 'boolean') {
+        round.open = index >= this.state.rounds.length - 2;
       }
-      this.generateGalleryRenders().catch((error) => this.reportError(error));
+    });
+    this.state.rounds.forEach((round, roundIndex) => {
+      const section = document.createElement('section');
+      section.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-4 flex flex-col gap-4';
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between';
+      header.innerHTML = `
+        <div class="font-semibold">Iteration #${round.index} <span class="text-xs text-plum-muted">(${round.tiles.length} images)</span></div>
+        <button type="button" class="text-xs text-peach underline">${round.open ? 'Collapse' : 'Expand'}</button>
+      `;
+      header.querySelector('button').addEventListener('click', () => {
+        round.open = !round.open;
+        this.renderRounds();
+      });
+      section.appendChild(header);
+
+      const grid = document.createElement('div');
+      grid.className = round.open ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'hidden';
+      round.tiles.forEach((tile, tileIndex) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-xl2 border border-plum-border/30 bg-plum-surface p-3 flex flex-col gap-3';
+        if (tile.status === 'ok') {
+          card.innerHTML = `
+            <div class="relative aspect-[3/2] w-full overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface-2">
+              <img src="${tile.imageUrl}" alt="Iteration render" class="h-full w-full object-cover cursor-pointer" />
+              ${tile.warnings.length ? `<span class="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-peach">${tile.warnings.length} warning</span>` : ''}
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <button type="button" class="rounded-full border border-plum-border/50 px-3 py-1 ${tile.fav ? 'bg-peach/20 text-peach' : 'text-plum-text'}" data-fav="${roundIndex}:${tileIndex}">${tile.fav ? '★ Favorited' : '☆ Favorite'}</button>
+              <button type="button" class="rounded-full border border-plum-border/50 px-3 py-1 text-plum-text" data-final="${roundIndex}:${tileIndex}">Use as final</button>
+            </div>
+            <details class="text-sm text-plum-muted">
+              <summary class="cursor-pointer text-xs uppercase tracking-wide text-plum-muted">Details anzeigen</summary>
+              <p class="mt-2 whitespace-pre-wrap">${escapeHtml(tile.text || '(no descriptor)')}</p>
+            </details>
+            <input type="text" class="${tile.fav ? '' : 'hidden '}rounded-xl2 border border-plum-border/40 bg-plum-surface px-2 py-1 text-sm" placeholder="Optional note for next round" value="${tile.note || ''}" data-note="${roundIndex}:${tileIndex}" />
+          `;
+          const img = card.querySelector('img');
+          img.addEventListener('click', () => window.open(tile.imageUrl, '_blank'));
+        } else if (tile.status === 'error') {
+          card.innerHTML = `
+            <p class="text-sm text-raspberry">Generation failed: ${escapeHtml(tile.error || 'Unknown error')}</p>
+            <button type="button" class="rounded-full border border-plum-border/50 px-3 py-1 text-sm text-plum-text" data-retry="${roundIndex}:${tileIndex}">Retry</button>
+          `;
+        } else {
+          card.innerHTML = '<div class="h-32 animate-pulse rounded-xl2 bg-plum-surface"></div>';
+        }
+        grid.appendChild(card);
+      });
+      section.appendChild(grid);
+      this.timelineEl.appendChild(section);
     });
 
-    if (this.state.favorites.size > 0) {
-      const confirm = document.createElement('div');
-      confirm.className = 'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
-      confirm.innerHTML = `
-        <div>Generate A/B mini-variants for ${this.state.favorites.size} favorite styles.</div>
-        <button class="rounded-full bg-coral/90 px-4 py-2 text-plum font-medium hover:bg-coral" ${this.state.loading ? 'disabled' : ''}>Launch A/B (${this.state.favorites.size * 2} images)</button>
-      `;
-      confirm.querySelector('button').addEventListener('click', () => this.generateABVariants());
-      card.appendChild(confirm);
+    this.timelineEl.querySelectorAll('button[data-fav]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const [roundIndex, tileIndex] = button.dataset.fav.split(':').map((value) => Number.parseInt(value, 10));
+        this.toggleFavorite(roundIndex, tileIndex);
+      });
+    });
+
+    this.timelineEl.querySelectorAll('button[data-final]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const [roundIndex, tileIndex] = button.dataset.final.split(':').map((value) => Number.parseInt(value, 10));
+        this.startFinalCompare(roundIndex, tileIndex).catch((error) => this.reportError(error));
+      });
+    });
+
+    this.timelineEl.querySelectorAll('button[data-retry]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const [roundIndex, tileIndex] = button.dataset.retry.split(':').map((value) => Number.parseInt(value, 10));
+        this.retryTile(roundIndex, tileIndex).catch((error) => this.reportError(error));
+      });
+    });
+
+    this.timelineEl.querySelectorAll('input[data-note]').forEach((input) => {
+      input.addEventListener('input', () => {
+        const [roundIndex, tileIndex] = input.dataset.note.split(':').map((value) => Number.parseInt(value, 10));
+        const round = this.state.rounds[roundIndex];
+        const tile = round?.tiles?.[tileIndex];
+        if (!tile) return;
+        tile.note = input.value;
+      });
+    });
+  }
+
+  updateSelectedCount() {
+    const count = this.state.rounds.reduce((acc, round) => acc + round.tiles.filter((tile) => tile.fav).length, 0);
+    this.state.selectedCount = count;
+    if (this.selectedCountEl) {
+      this.selectedCountEl.textContent = `${count} selected`;
     }
-
-    return card;
   }
 
-  renderABCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">6. A/B mini-variants</h2>
-        <p class="text-sm text-plum-muted">Smart Mixed axes provide controlled variation for each favorite style.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-3" id="abGrid"></div>
-      <button class="self-end rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''} id="generateHeroes">Generate 3 hero renders</button>
-    `;
-
-    const grid = card.querySelector('#abGrid');
-    this.state.abVariants.forEach((variant) => {
-      const tile = document.createElement('article');
-      tile.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
-      tile.innerHTML = `
-        <div class="relative aspect-[3/2] bg-plum-surface-2">
-          ${variant.thumbUrl ? `<img src="${variant.thumbUrl}" alt="${variant.style} variant" class="h-full w-full object-cover" loading="lazy" />` : '<div class="flex h-full items-center justify-center text-xs text-plum-muted">Pending</div>'}
-        </div>
-        <div class="p-4 text-xs">
-          <div class="font-semibold text-plum-text">${variant.style} · ${variant.variant}</div>
-          <div class="text-plum-muted">${variant.focus}</div>
-        </div>
-      `;
-      grid.appendChild(tile);
-    });
-
-    card.querySelector('#generateHeroes').addEventListener('click', () => this.generateHeroRenders());
-    return card;
+  updateGenerateBarState() {
+    if (!this.generateBar || !this.btnGenerate) return;
+    const shouldShow = this.state.selectedCount > 0;
+    this.generateBar.classList.toggle('hidden', !shouldShow);
+    this.btnGenerate.disabled = this.state.isGenerating;
   }
 
-  renderHeroCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">7. Hero renders</h2>
-        <p class="text-sm text-plum-muted">Three flagship Smart Mixed renders at 1536×1024. Tap to open full size in a new tab.</p>
-      </div>
-      <div class="grid gap-4 lg:grid-cols-3" id="heroGrid"></div>
-    `;
-
-    const grid = card.querySelector('#heroGrid');
-    this.state.heroRenders.forEach((render) => {
-      const tile = document.createElement('a');
-      tile.href = render.fullUrl;
-      tile.target = '_blank';
-      tile.rel = 'noopener';
-      tile.className = 'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
-      tile.innerHTML = `
-        <img src="${render.thumbUrl}" alt="Hero render" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy" />
-        <span class="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wide">${render.variant}</span>
-      `;
-      grid.appendChild(tile);
-    });
-
-    return card;
-  }
-
-  renderInsightsCard() {
-  const card = document.createElement('section');
-  card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-  const quickWins = Array.isArray(this.state.quickWins) ? this.state.quickWins : [];
-  const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
-        <p class="text-sm text-plum-muted">Actionable instructions with neutral specifications only.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${quickWins.map((item) => `<li><span class="text-plum-text font-medium">${item.title}</span> — ${item.description}</li>`).join('')}
-          </ol>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${list.length > 0
-              ? list
-                  .map(
-                    (item) =>
-                      `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
-                  )
-                  .join('')
-              : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'}
-          </ol>
-        </section>
-      </div>
-    `;
-    return card;
-  }
-
-  async importPhoto(file) {
-    this.state.loading = true;
-    this.render();
-    const normalized = await normalizeImageFile(file);
+  async importMainPhoto(file) {
+    const normalized = await normalizeImageFile(file, { maxSide: 2048, quality: 0.9 });
     const base64 = await blobToBase64(normalized.original);
-    const thumbUrl = URL.createObjectURL(normalized.thumb);
-    const fullUrl = URL.createObjectURL(normalized.original);
-    const projectId = this.state.project.id;
-
-    const originalRecord = await saveMedia(projectId, {
-      kind: 'input',
-      blob: normalized.original,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.original.size,
-    });
-
-    await saveMedia(projectId, {
-      kind: 'thumb',
-      relatedId: originalRecord.id,
-      blob: normalized.thumb,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.thumb.size,
-    });
-
-    await appendEvent(projectId, {
-      type: 'upload_image',
-      payload: { mediaId: originalRecord.id, name: file.name },
-    });
-
-    this.state.photo = {
+    const url = await blobToDataUrl(normalized.original);
+    this.state.main = {
       base64,
-      thumbUrl,
-      fullUrl,
+      mime: file.type === 'image/png' ? 'image/png' : 'image/jpeg',
+      url,
       width: normalized.width,
       height: normalized.height,
-      fileName: file.name,
     };
-    this.resetAfter('analysis');
-    this.state.loading = false;
+    this.state.roomBrief = null;
+    this.state.roomBriefDirty = true;
+    this.state.rounds = [];
+    this.state.final = { imageUrl: '', notes: '' };
     this.render();
   }
 
-  resetAfter(step) {
-    if (step === 'photo') {
-      this.state.photo = null;
+  async addReference(file) {
+    if (this.state.references.length >= 2) return;
+    const normalized = await normalizeImageFile(file, { maxSide: 2048, quality: 0.9 });
+    const base64 = await blobToBase64(normalized.original);
+    const url = await blobToDataUrl(normalized.original);
+    const reference = {
+      id: createId(),
+      base64,
+      mime: file.type === 'image/png' ? 'image/png' : 'image/jpeg',
+      url,
+    };
+    this.state.references = [...this.state.references, reference].slice(0, 2);
+    this.renderReferences();
+  }
+
+  reorderReferences(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    const refs = [...this.state.references];
+    const [moved] = refs.splice(fromIndex, 1);
+    refs.splice(toIndex, 0, moved);
+    this.state.references = refs;
+    this.renderReferences();
+  }
+
+  removeReference(index) {
+    this.state.references = this.state.references.filter((_, idx) => idx !== index);
+    this.renderReferences();
+  }
+
+  async ensureRoomBrief() {
+    if (!this.state.main) {
+      throw new Error('Main photo required');
     }
-    this.state.analysis = null;
-    this.state.gallery = [];
-    this.state.favorites = new Set();
-    this.state.abVariants = [];
-    this.state.heroRenders = [];
-    this.state.quickWins = null;
-    this.state.miniList = null;
-    this.state.palette = null;
-    this.state.paletteOptions = [];
-    this.state.selectedPaletteIndex = null;
-    this.render();
-  }
-
-  async runAnalysis({ intendedUse, scope, notes }) {
-    this.state.loading = true;
-    this.state.error = null;
-    this.render();
+    if (this.state.roomBrief && !this.state.roomBriefDirty) {
+      return;
+    }
+    this.state.roomBriefLoading = true;
+    this.renderRoomBrief();
     try {
-      const prompt = buildAnalysisPrompt({ intendedUse, scope, notes });
-      const controller = new AbortController();
-      this.controller = controller;
-      const data = await this.client.analyzeRoom({
-        imageBase64: this.state.photo.base64,
-        prompt,
-        signal: controller.signal,
+      const promptText = buildRoomBriefPrompt({ purpose: this.state.purpose, notes: this.state.firstNotes });
+      const result = await this.client.generateRoomBrief({
+        promptText,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        sampling: this.state.sampling,
       });
-      const normalizedAnalysis = { ...data };
-  const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
-      const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
-      if (defaultPalette) {
-        normalizedAnalysis.palette_60_30_10 = defaultPalette;
-      }
-      normalizedAnalysis.palette_options = paletteOptions;
-      normalizedAnalysis.render_gallery = normalizeRenderGallery(normalizedAnalysis, defaultPalette);
-      await saveArtifact(this.state.project.id, {
-        kind: 'analysis',
-        json: normalizedAnalysis,
-      });
-      await appendEvent(this.state.project.id, {
-        type: 'analysis_done',
-        payload: { intendedUse, scope },
-      });
-      this.state.analysis = normalizedAnalysis;
-      this.state.quickWins = normalizedAnalysis.quick_wins;
-      this.state.paletteOptions = paletteOptions;
-      this.state.palette = null;
-      this.state.selectedPaletteIndex = null;
-      this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
-    } catch (error) {
-      if (error.code === 'missing-key') {
-        this.settingsModal.showModal();
-      }
-      this.reportError(error);
+      this.state.roomBrief = result;
+      this.state.roomBriefDirty = false;
     } finally {
-      this.state.loading = false;
-      this.render();
+      this.state.roomBriefLoading = false;
+      this.renderRoomBrief();
     }
   }
 
-  async generateGalleryRenders() {
-    this.state.loading = true;
-    this.render();
-    const analysis = this.state.analysis;
-    const poolSize = 5;
-    const tasks = analysis.render_gallery.map((item) => async () => {
-      const assets = await this.renderAndStore({
-        prompt: item.prompt,
-        relatedId: item.style,
-      });
-      const entry = {
-        style: item.style,
-        prompt: item.prompt,
-        focus: item.focus,
-        thumbUrl: assets.thumbUrl,
-        fullUrl: assets.fullUrl,
-      };
-      return entry;
-    });
-
-    const results = [];
-    const queue = tasks.slice();
-    const workers = Array.from({ length: poolSize }, async () => {
-      while (queue.length > 0) {
-        const job = queue.shift();
-        try {
-          const result = await job();
-          results.push(result);
-          this.state.gallery = [...results];
-          this.render();
-        } catch (error) {
-          console.error('Render failed', error);
-        }
-      }
-    });
-
-    await Promise.all(workers);
-    await appendEvent(this.state.project.id, {
-      type: 'gallery_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
+  markRoomBriefDirty() {
+    this.state.roomBriefDirty = true;
+    this.renderRoomBrief();
+    this.scheduleRoomBriefRegeneration();
   }
 
-  async generateABVariants() {
-    if (this.state.favorites.size === 0) return;
-    this.state.loading = true;
-    this.render();
-    const variants = [];
-    const axes = this.state.analysis.smart_mixed_axes;
-    for (const style of this.state.favorites) {
-      const basePrompt = this.state.analysis.render_gallery.find((item) => item.style === style);
-      if (!basePrompt) continue;
-      const prompts = buildABPrompts(basePrompt.prompt, axes);
-      for (let index = 0; index < prompts.length; index += 1) {
-        try {
-          const assets = await this.renderAndStore({
-            prompt: prompts[index],
-            relatedId: `${style}-${index}`,
-          });
-          variants.push({
-            style,
-            variant: index === 0 ? axes.axisA.label : axes.axisB.label,
-            focus: index === 0 ? axes.axisA.description : axes.axisB.description,
-            thumbUrl: assets.thumbUrl,
-            fullUrl: assets.fullUrl,
-          });
-        } catch (error) {
-          console.error('Variant render failed', error);
-        }
+  scheduleRoomBriefRegeneration() {
+    if (!this.state.main || !this.state.roomBrief || !this.state.apiKey) {
+      return;
+    }
+    if (this.state.roomBriefLoading) {
+      return;
+    }
+    if (this.roomBriefRegenTimer) {
+      clearTimeout(this.roomBriefRegenTimer);
+    }
+    this.roomBriefRegenTimer = setTimeout(() => {
+      this.roomBriefRegenTimer = null;
+      this.regenerateRoomBrief();
+    }, 800);
+  }
+
+  async regenerateRoomBrief() {
+    try {
+      await this.ensureRoomBrief();
+    } catch (error) {
+      console.error(error);
+      if (this.roomBriefStatus) {
+        this.roomBriefStatus.textContent = 'Refresh failed';
       }
     }
-    this.state.abVariants = variants;
-    await appendEvent(this.state.project.id, {
-      type: 'ab_generated',
-      payload: { count: variants.length },
-    });
-    this.state.loading = false;
-    this.render();
   }
 
-  async generateHeroRenders() {
-    this.state.loading = true;
-    this.render();
-    const axes = this.state.analysis.smart_mixed_axes;
-    const basePrompt = this.state.analysis.render_gallery[0].prompt;
-    const prompts = buildHeroPrompts(basePrompt, axes);
-    const results = [];
-    for (let index = 0; index < prompts.length; index += 1) {
-      try {
-        const assets = await this.renderAndStore({
-          prompt: prompts[index],
-          relatedId: `hero-${index}`,
-        });
-        results.push({
-          variant: index === 0 ? 'Axis A' : index === 1 ? 'Axis B' : 'Blend',
-          thumbUrl: assets.thumbUrl,
-          fullUrl: assets.fullUrl,
-        });
-      } catch (error) {
-        console.error('Hero render failed', error);
-      }
+  async startInitialRound() {
+    if (!this.state.main) {
+      alert('Please upload the main photo first.');
+      return;
     }
-    this.state.heroRenders = results;
-    this.state.quickWins = this.state.analysis.quick_wins;
-    this.state.miniList = buildMiniList(this.state.analysis);
-    await appendEvent(this.state.project.id, {
-      type: 'hero_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  toggleFavorite(style) {
-    if (this.state.favorites.has(style)) {
-      this.state.favorites.delete(style);
-    } else {
-      if (this.state.favorites.size >= MAX_FAVORITES) {
-        return;
-      }
-      this.state.favorites.add(style);
+    if (!this.state.apiKey) {
+      this.populateSettingsForm();
+      this.settingsModal.showModal();
+      return;
     }
-    this.render();
+    await this.ensureRoomBrief();
+    await this.runRound();
+    this.roundGuidanceInput.value = '';
+    this.state.roundGuidance = '';
   }
 
-  async persistRenderAssets({ blob, thumb, relatedId }) {
-    const renderRecord = await saveMedia(this.state.project.id, {
-      kind: 'render',
-      relatedId,
-      blob,
-      mime: blob.type,
-      bytes: blob.size,
-    });
-    await saveMedia(this.state.project.id, {
-      kind: 'thumb',
-      relatedId: renderRecord.id,
-      blob: thumb,
-      mime: 'image/jpeg',
-      bytes: thumb.size,
-    });
-    return renderRecord;
+  async startNextRound() {
+    if (!this.state.apiKey) {
+      this.populateSettingsForm();
+      this.settingsModal.showModal();
+      return;
+    }
+    await this.runRound();
+    this.roundGuidanceInput.value = '';
+    this.state.roundGuidance = '';
   }
 
-  async renderAndStore({ prompt, relatedId }) {
-    const [result] = await this.client.generateRenders({
-      prompt,
-      imageBase64: this.state.photo.base64,
-    });
-    const blob = base64ToBlob(result.data, result.mimeType);
-    const thumb = await createThumb(blob);
-    await this.persistRenderAssets({ blob, thumb, relatedId });
-    return {
-      fullUrl: URL.createObjectURL(blob),
-      thumbUrl: URL.createObjectURL(thumb),
+  async runRound() {
+    if (!this.state.main) {
+      throw new Error('Main photo required');
+    }
+    this.state.isGenerating = true;
+    this.updateGenerateBarState();
+    const roundIndex = this.state.rounds.length + 1;
+    const round = {
+      index: roundIndex,
+      tiles: Array.from({ length: diversityDeck().length }, () => ({ status: 'pending' })),
+      open: true,
+      favoritesBlock: stringifyFavorites(this.collectFavorites()),
     };
+    const favoritesBlock = round.favoritesBlock;
+    this.clearFavorites();
+    this.state.rounds.push(round);
+    this.renderRounds();
+
+    const hints = diversityDeck();
+    const references = this.state.references.map((ref) => ({ base64: ref.base64, mimeType: ref.mime }));
+    await runIterationBatch({
+      hints,
+      poolSize: 6,
+      taskFactory: async (index, hint) => {
+        const promptText = buildIterationPrompt({
+          roomBrief: this.state.roomBrief?.raw ?? this.state.roomBrief?.paragraph ?? '',
+          purpose: this.state.purpose,
+          roundGuidance: this.state.roundGuidance,
+          favoritesTextBlock: favoritesBlock,
+          diversityHint: hint,
+        });
+        const result = await this.client.generateVariant({
+          promptText,
+          base64Main: this.state.main.base64,
+          mimeMain: this.state.main.mime,
+          references,
+          sampling: this.state.sampling,
+        });
+        round.tiles[index] = {
+          status: 'ok',
+          ...result,
+          fav: false,
+          note: '',
+        };
+        this.renderRounds();
+      },
+      onProgress: ({ index, ok, error }) => {
+        if (!ok && error) {
+          round.tiles[index] = { status: 'error', error: error.message || String(error) };
+          this.renderRounds();
+        }
+      },
+    });
+
+    this.state.isGenerating = false;
+    this.updateSelectedCount();
+    this.updateGenerateBarState();
   }
 
-  findStyleScore(style) {
-    return (
-      this.state.analysis?.styles_top10.find((item) => item.style === style)?.score ?? 0
-    );
+  collectFavorites() {
+    const favorites = [];
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        if (tile.fav && tile.status === 'ok') {
+          favorites.push({ text: tile.text, note: tile.note });
+        }
+      });
+    });
+    return favorites;
+  }
+
+  clearFavorites() {
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        tile.fav = false;
+      });
+    });
+    this.updateSelectedCount();
+  }
+
+  toggleFavorite(roundIndex, tileIndex) {
+    const round = this.state.rounds[roundIndex];
+    const tile = round?.tiles?.[tileIndex];
+    if (!tile || tile.status !== 'ok') return;
+    tile.fav = !tile.fav;
+    const input = this.timelineEl.querySelector(`input[data-note="${roundIndex}:${tileIndex}"]`);
+    if (input) {
+      input.classList.toggle('hidden', !tile.fav);
+      if (!tile.fav) input.value = tile.note || '';
+    }
+    this.updateSelectedCount();
+    this.updateGenerateBarState();
+    this.renderRounds();
+  }
+
+  async retryTile(roundIndex, tileIndex) {
+    const round = this.state.rounds[roundIndex];
+    if (!round) return;
+    round.tiles[tileIndex] = { status: 'pending' };
+    this.renderRounds();
+    const hints = diversityDeck();
+    const hint = hints[tileIndex];
+    try {
+      const promptText = buildIterationPrompt({
+        roomBrief: this.state.roomBrief?.raw ?? this.state.roomBrief?.paragraph ?? '',
+        purpose: this.state.purpose,
+        roundGuidance: this.state.roundGuidance,
+        favoritesTextBlock: round.favoritesBlock,
+        diversityHint: hint,
+      });
+      const references = this.state.references.map((ref) => ({ base64: ref.base64, mimeType: ref.mime }));
+      const result = await this.client.generateVariant({
+        promptText,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        references,
+        sampling: this.state.sampling,
+      });
+      round.tiles[tileIndex] = { status: 'ok', ...result, fav: false, note: '' };
+    } catch (error) {
+      round.tiles[tileIndex] = { status: 'error', error: error.message || String(error) };
+    }
+    this.renderRounds();
+    this.updateSelectedCount();
+  }
+
+  async startFinalCompare(roundIndex, tileIndex) {
+    const round = this.state.rounds[roundIndex];
+    const tile = round?.tiles?.[tileIndex];
+    if (!tile || tile.status !== 'ok') return;
+    const promptText = buildFinalizationPrompt();
+    const references = this.state.references.map((ref) => ({ base64: ref.base64, mimeType: ref.mime }));
+    const result = await this.client.finalizeHiRes({
+      promptText,
+      base64Main: this.state.main.base64,
+      mimeMain: this.state.main.mime,
+      base64Child: tile.imageBase64,
+      mimeChild: tile.imageMimeType,
+      references,
+      sampling: this.state.sampling,
+    });
+    this.state.candidate = { imageUrl: result.imageUrl, notes: result.text };
+    this.finalCandidate.src = result.imageUrl;
+    this.finalCandidateNotes.textContent = result.text;
+    if (this.state.final.imageUrl) {
+      this.finalCurrent.src = this.state.final.imageUrl;
+      this.finalCurrentNotes.textContent = this.state.final.notes || '';
+    } else {
+      this.finalCurrent.src = tile.imageUrl;
+      this.finalCurrentNotes.textContent = tile.text || '';
+    }
+    this.openFinalModal();
+  }
+
+  openFinalModal() {
+    this.finalBackdrop.classList.remove('hidden');
+    this.finalBackdrop.classList.add('flex');
+  }
+
+  closeFinalModal() {
+    this.finalBackdrop.classList.add('hidden');
+    this.finalBackdrop.classList.remove('flex');
+  }
+
+  handleRestart() {
+    if (this.state.rounds.length === 0) return;
+    const confirmReset = window.confirm('Restart will clear all generated images and selections. Keep base photo, purpose, references, room brief and settings?');
+    if (!confirmReset) return;
+    this.state.rounds = [];
+    this.state.final = { imageUrl: '', notes: '' };
+    this.state.selectedCount = 0;
+    this.render();
+  }
+
+  populateSettingsForm() {
+    this.keyInput.value = this.state.apiKey;
+    this.tempInput.value = this.state.sampling.temperature.toFixed(2);
+    this.topPInput.value = this.state.sampling.topP.toFixed(2);
+    this.topKInput.value = String(this.state.sampling.topK);
+  }
+
+  saveSampling({ temperature, topP, topK }) {
+    const sampling = {
+      temperature: Number.isFinite(temperature) ? clamp(temperature, 0, 1) : DEFAULT_SAMPLING.temperature,
+      topP: Number.isFinite(topP) ? clamp(topP, 0, 1) : DEFAULT_SAMPLING.topP,
+      topK: Number.isFinite(topK) && topK > 0 ? Math.round(topK) : DEFAULT_SAMPLING.topK,
+    };
+    this.state.sampling = sampling;
+    localStorage.setItem(STORAGE_SAMPLING_KEY, JSON.stringify(sampling));
   }
 
   reportError(error) {
     console.error(error);
-    this.state.error = error.message ?? 'Unexpected error';
-    this.state.loading = false;
-    this.render();
+    alert(error.message || String(error));
+    this.state.isGenerating = false;
+    this.updateGenerateBarState();
   }
 }
 
-async function createThumb(blob) {
-  const canvas = document.createElement('canvas');
-  const img = document.createElement('img');
-  img.src = await blobToDataUrl(blob);
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-  });
-  const scale = Math.min(384 / img.naturalWidth, 384 / img.naturalHeight, 1);
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) {
-        resolve(result);
-      } else {
-        reject(new Error('Unable to create thumbnail'));
-      }
-    }, 'image/jpeg', 0.85);
-  });
-}
-
-function evaluateScaleConfidence(guesses) {
-  if (!guesses) return null;
-  const confidences = [guesses.width_m, guesses.depth_m, guesses.height_m]
-    .map((item) => item?.confidence)
-    .filter((value) => typeof value === 'number');
-  if (confidences.length === 0) return null;
-  const min = Math.min(...confidences);
-  if (Number.isFinite(min) && min < 0.4) {
-    return 'Scale confidence is low; measurements may need manual verification.';
+function loadSampling() {
+  try {
+    const stored = localStorage.getItem(STORAGE_SAMPLING_KEY);
+    if (!stored) return { ...DEFAULT_SAMPLING };
+    const parsed = JSON.parse(stored);
+    const temperature = Number.isFinite(parsed.temperature) ? parsed.temperature : DEFAULT_SAMPLING.temperature;
+    const topP = Number.isFinite(parsed.topP) ? parsed.topP : DEFAULT_SAMPLING.topP;
+    const topK = Number.isFinite(parsed.topK) && parsed.topK > 0 ? parsed.topK : DEFAULT_SAMPLING.topK;
+    return { temperature, topP, topK };
+  } catch {
+    return { ...DEFAULT_SAMPLING };
   }
-  return null;
 }
 
+function createId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

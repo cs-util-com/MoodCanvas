@@ -23,3 +23,10 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03
+- Rebuilt the app around the Iteration 2 spec: iterative rounds of 12 variants with diversity deck, sticky generate bar, and hi-res finalization modal.
+- Added new Gemini client helpers for room brief, variant generation with descriptor repair, and finalization workflows.
+- Replaced prompt builders with iteration-focused templates and added concurrency runner plus diversity utilities.
+- Simplified storage by removing IndexedDB scaffolding and palette logic; updated README to reflect the new IEC-focused product story.
+- Expanded unit coverage for prompts, diversity deck, iteration runner, and Gemini client parser to maintain the high coverage gate.

@@ -1,20 +1,20 @@
 /* istanbul ignore file */
 
-export async function normalizeImageFile(file) {
+export async function normalizeImageFile(file, { maxSide = 2048, quality = 0.9 } = {}) {
   if (!(file instanceof Blob)) {
     throw new TypeError('Expected a File or Blob instance');
   }
 
   const blob = file.slice(0, file.size, file.type || 'image/jpeg');
   const bitmap = await createImageBitmapWithOrientation(blob);
-  const original = await drawBitmapToBlob(bitmap, blob.type);
+  const original = await drawBitmapToBlob(bitmap, blob.type, maxSide, quality);
   const thumb = await createThumbnail(bitmap, blob.type);
 
   return {
     original,
     thumb,
-    width: bitmap.width,
-    height: bitmap.height,
+    width: getTargetSize(bitmap, maxSide).width,
+    height: getTargetSize(bitmap, maxSide).height,
   };
 }
 
@@ -24,13 +24,13 @@ async function createThumbnail(bitmap, mime) {
   const scale = longest > 512 ? 512 / longest : 1;
   const width = Math.round(size.width * scale);
   const height = Math.round(size.height * scale);
-  return drawBitmapToBlob(bitmap, mime, width, height, 0.9);
+  return drawBitmapToBlob(bitmap, mime, Math.max(width, height), 0.9, width, height);
 }
 
-async function drawBitmapToBlob(bitmap, mime, width, height, quality = 0.92) {
-  const size = getBitmapSize(bitmap);
-  const targetWidth = width ?? size.width;
-  const targetHeight = height ?? size.height;
+async function drawBitmapToBlob(bitmap, mime, maxSide, quality = 0.92, forcedWidth, forcedHeight) {
+  const { width: targetWidth, height: targetHeight } = forcedWidth && forcedHeight
+    ? { width: forcedWidth, height: forcedHeight }
+    : getTargetSize(bitmap, maxSide);
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
   canvas.height = targetHeight;
@@ -71,6 +71,19 @@ function getBitmapSize(bitmap) {
     return { width: bitmap.naturalWidth, height: bitmap.naturalHeight };
   }
   throw new Error('Unsupported bitmap type');
+}
+
+function getTargetSize(bitmap, maxSide) {
+  const size = getBitmapSize(bitmap);
+  if (!maxSide || !Number.isFinite(maxSide) || maxSide <= 0) {
+    return size;
+  }
+  const longest = Math.max(size.width, size.height);
+  const scale = longest > maxSide ? maxSide / longest : 1;
+  return {
+    width: Math.round(size.width * scale),
+    height: Math.round(size.height * scale),
+  };
 }
 
 export async function blobToDataUrl(blob) {
