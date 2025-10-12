@@ -50,4 +50,12 @@
 - Documented that reference images serve style cues only and must not influence room geometry.
 - Added unit test expectations around the new guardrail language to prevent regressions.
 
+## 2025-10-12 (first-run focus)
+
+- Moved the first-iteration launch control into its own post-brief section so the "Start generating" button lives directly beneath the Silent Room Brief card.
+- Hid the generate-next-iteration bar until the first gallery exists and stopped mounting the compare-final modal until a hi-res candidate is available, keeping the pre-run UI minimal.
+- Added layout/unit tests that lock in the new control order and lazy modal creation to catch regressions.
+
+```
+
 ```

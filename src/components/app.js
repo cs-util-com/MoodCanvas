@@ -81,6 +81,21 @@ export class MoodCanvasApp {
       document.removeEventListener('keydown', this.handleEscapeKeydown);
       this.isFinalKeyListenerAttached = false;
     }
+    if (this.finalBackdrop) {
+      this.finalBackdrop.remove();
+      this.finalBackdrop = null;
+    }
+    if (this.finalModal) {
+      this.finalModal.remove();
+      this.finalModal = null;
+    }
+    this.finalClose = null;
+    this.finalCurrent = null;
+    this.finalCandidate = null;
+    this.finalCurrentNotes = null;
+    this.finalCandidateNotes = null;
+    this.finalKeep = null;
+    this.finalReplace = null;
   }
 
   renderShell() {
@@ -119,32 +134,6 @@ export class MoodCanvasApp {
           </div>
         </div>
       </div>
-      <div id="final-backdrop" class="fixed inset-0 hidden z-50 bg-black/70"></div>
-      <section id="final-modal" class="fixed inset-x-4 top-1/2 hidden z-50 -translate-y-1/2 rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-xl">
-        <header class="flex items-start justify-between gap-4">
-          <div>
-            <h2 class="text-lg font-semibold">Compare final render</h2>
-            <p class="text-sm text-plum-muted">Review the hi-res candidate against the current final build notes.</p>
-          </div>
-          <button id="final-close" class="text-sm text-plum-muted hover:text-peach">Close</button>
-        </header>
-        <div class="mt-4 grid gap-4 md:grid-cols-2">
-          <div class="flex flex-col gap-2">
-            <h3 class="text-xs uppercase tracking-wide text-plum-muted">Current final</h3>
-            <img id="final-current" class="w-full rounded-xl2 border border-plum-border/40 object-cover" alt="Current final" />
-            <p id="final-current-notes" class="text-xs text-plum-muted whitespace-pre-line"></p>
-          </div>
-          <div class="flex flex-col gap-2">
-            <h3 class="text-xs uppercase tracking-wide text-plum-muted">Candidate</h3>
-            <img id="final-candidate" class="w-full rounded-xl2 border border-plum-border/40 object-cover" alt="Candidate final" />
-            <p id="final-candidate-notes" class="text-xs text-plum-muted whitespace-pre-line"></p>
-          </div>
-        </div>
-        <footer class="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-          <button id="final-keep" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm text-plum-muted hover:bg-plum-surface">Keep current</button>
-          <button id="final-replace" class="rounded-full bg-raspberry px-4 py-2 text-sm font-medium text-white hover:bg-raspberry/90">Replace with candidate</button>
-        </footer>
-      </section>
       <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
         <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
           <header>
@@ -177,17 +166,6 @@ export class MoodCanvasApp {
     this.guidanceInput = this.root.querySelector('#roundGuidanceInput');
     this.generateBtn = this.root.querySelector('#generateNextBtn');
     this.selectedCounter = this.root.querySelector('#selectedCounter');
-    this.finalBackdrop = this.root.querySelector('#final-backdrop');
-    this.finalModal = this.root.querySelector('#final-modal');
-    this.finalClose = this.root.querySelector('#final-close');
-    this.finalCurrent = this.root.querySelector('#final-current');
-    this.finalCandidate = this.root.querySelector('#final-candidate');
-    this.finalCurrentNotes = this.root.querySelector('#final-current-notes');
-    this.finalCandidateNotes = this.root.querySelector(
-      '#final-candidate-notes'
-    );
-    this.finalKeep = this.root.querySelector('#final-keep');
-    this.finalReplace = this.root.querySelector('#final-replace');
 
     this.settingsBtn.addEventListener('click', () => {
       if (this.settingsModal.open) return;
@@ -221,21 +199,6 @@ export class MoodCanvasApp {
 
     this.guidanceInput.addEventListener('input', (event) => {
       this.state.roundGuidance = event.target.value;
-    });
-
-    this.finalClose.addEventListener('click', () => this.closeFinalModal());
-    this.finalBackdrop.addEventListener('click', () => this.closeFinalModal());
-    this.finalKeep.addEventListener('click', () => this.closeFinalModal());
-    this.finalReplace.addEventListener('click', () => {
-      if (this.state.candidate) {
-        this.state.final = {
-          imageUrl: this.state.candidate.imageUrl,
-          notes: this.state.candidate.notes,
-        };
-        this.state.candidate = null;
-        this.closeFinalModal();
-        this.render();
-      }
     });
   }
   async bootstrapProject() {
@@ -284,6 +247,7 @@ export class MoodCanvasApp {
     if (this.state.generatingRoomBrief || this.state.roomBrief) {
       this.timelineEl.appendChild(this.renderRoomBriefCard());
     }
+    this.timelineEl.appendChild(this.renderStartSection());
     this.state.rounds.forEach((round) => {
       this.timelineEl.appendChild(this.renderRound(round));
     });
@@ -297,10 +261,6 @@ export class MoodCanvasApp {
     const card = document.createElement('section');
     card.className =
       'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const isRestart = this.state.rounds.length > 0;
-    const startLabel = isRestart
-      ? 'Restart (clear generated images)'
-      : 'Start generating first suggestions';
 
     card.innerHTML = `
       <div class="flex items-start justify-between gap-4">
@@ -347,16 +307,11 @@ export class MoodCanvasApp {
           </div>
         </section>
       </div>
-      <div class="grid gap-4 md:grid-cols-2">
+  <div class="grid gap-4">
         <label class="flex flex-col gap-2 text-sm">
           <span>Intended use / purpose</span>
           <input type="text" value="${purpose.replace(/"/g, '&quot;')}" placeholder="e.g. Calm bedroom retreat" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-peach/70" id="purposeInput" />
         </label>
-        <div class="flex items-end justify-end">
-          <button id="startRoundBtn" class="rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach disabled:opacity-60 disabled:cursor-not-allowed" ${main && !this.state.generatingRound ? '' : 'disabled'}>
-            ${startLabel}
-          </button>
-        </div>
       </div>
     `;
 
@@ -425,23 +380,6 @@ export class MoodCanvasApp {
       }
     });
 
-    const startBtn = card.querySelector('#startRoundBtn');
-    startBtn.addEventListener('click', () => {
-      if (this.state.rounds.length > 0) {
-        this.handleRestart();
-        return;
-      }
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      if (!this.state.main) {
-        alert('Please upload a main room photo first.');
-        return;
-      }
-      this.startFirstIteration().catch((error) => this.reportError(error));
-    });
-
     return card;
   }
 
@@ -459,6 +397,55 @@ export class MoodCanvasApp {
       ${brief ? `<ul class="list-disc space-y-1 pl-5 text-sm text-plum-muted">${brief.bullets.map((item) => `<li>${item}</li>`).join('')}</ul>` : ''}
     `;
     return card;
+  }
+
+  renderStartSection() {
+    const section = document.createElement('section');
+    section.className =
+      'rounded-xl2 border border-dashed border-plum-border/40 bg-plum-surface p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between';
+    const isRestart = this.state.rounds.length > 0;
+    const startLabel = isRestart
+      ? 'Restart (clear generated images)'
+      : 'Start generating first suggestions';
+    const disabled = !this.state.main || this.state.generatingRound;
+    const descriptor = isRestart
+      ? 'Clear previous iterations and begin again with the current brief.'
+      : 'Kick off the first gallery once the silent brief looks right.';
+
+    section.innerHTML = `
+      <div class="flex-1 text-sm text-plum-muted">
+        <h2 class="text-base font-semibold text-plum-text">${
+          isRestart ? 'Ready to restart?' : 'Ready to begin?'
+        }</h2>
+        <p>${descriptor}</p>
+      </div>
+      <div class="flex justify-end">
+        <button id="startRoundBtn" class="rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach disabled:opacity-60 disabled:cursor-not-allowed" ${
+          disabled ? 'disabled' : ''
+        }>
+          ${startLabel}
+        </button>
+      </div>
+    `;
+
+    const startBtn = section.querySelector('#startRoundBtn');
+    startBtn.addEventListener('click', () => {
+      if (this.state.rounds.length > 0) {
+        this.handleRestart();
+        return;
+      }
+      if (!this.state.apiKey) {
+        this.settingsModal.showModal();
+        return;
+      }
+      if (!this.state.main) {
+        alert('Please upload a main room photo first.');
+        return;
+      }
+      this.startFirstIteration().catch((error) => this.reportError(error));
+    });
+
+    return section;
   }
 
   renderRound(round) {
@@ -623,17 +610,19 @@ export class MoodCanvasApp {
   renderGenerateBar() {
     if (!this.generateBar) return;
     const hasSelection = this.state.selectedForNext.size > 0;
-    if (hasSelection) {
+    const hasRounds = this.state.rounds.length > 0;
+    const allowBar = hasSelection && hasRounds;
+    if (allowBar) {
       this.generateBar.classList.remove('hidden');
     } else {
       this.generateBar.classList.add('hidden');
     }
     if (this.guidanceInput) {
       this.guidanceInput.value = this.state.roundGuidance;
-      this.guidanceInput.disabled = this.state.generatingRound;
+      this.guidanceInput.disabled = !hasRounds || this.state.generatingRound;
     }
     if (this.generateBtn) {
-      this.generateBtn.disabled = !hasSelection || this.state.generatingRound;
+      this.generateBtn.disabled = !allowBar || this.state.generatingRound;
     }
     if (this.selectedCounter) {
       this.selectedCounter.textContent = `${this.state.selectedForNext.size} favorite${
@@ -1008,7 +997,77 @@ export class MoodCanvasApp {
     return blobToBase64(blob);
   }
 
+  ensureFinalModal() {
+    if (this.finalModal && this.finalBackdrop) {
+      return;
+    }
+
+    this.finalBackdrop = document.createElement('div');
+    this.finalBackdrop.id = 'final-backdrop';
+    this.finalBackdrop.className = 'fixed inset-0 hidden z-50 bg-black/70';
+    document.body.appendChild(this.finalBackdrop);
+
+    this.finalModal = document.createElement('section');
+    this.finalModal.id = 'final-modal';
+    this.finalModal.className =
+      'fixed inset-x-4 top-1/2 hidden z-50 -translate-y-1/2 rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-xl';
+    this.finalModal.innerHTML = `
+      <header class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold">Compare final render</h2>
+          <p class="text-sm text-plum-muted">Review the hi-res candidate against the current final build notes.</p>
+        </div>
+        <button id="final-close" class="text-sm text-plum-muted hover:text-peach">Close</button>
+      </header>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div class="flex flex-col gap-2">
+          <h3 class="text-xs uppercase tracking-wide text-plum-muted">Current final</h3>
+          <img id="final-current" class="w-full rounded-xl2 border border-plum-border/40 object-cover" alt="Current final" />
+          <p id="final-current-notes" class="text-xs text-plum-muted whitespace-pre-line"></p>
+        </div>
+        <div class="flex flex-col gap-2">
+          <h3 class="text-xs uppercase tracking-wide text-plum-muted">Candidate</h3>
+          <img id="final-candidate" class="w-full rounded-xl2 border border-plum-border/40 object-cover" alt="Candidate final" />
+          <p id="final-candidate-notes" class="text-xs text-plum-muted whitespace-pre-line"></p>
+        </div>
+      </div>
+      <footer class="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+        <button id="final-keep" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm text-plum-muted hover:bg-plum-surface">Keep current</button>
+        <button id="final-replace" class="rounded-full bg-raspberry px-4 py-2 text-sm font-medium text-white hover:bg-raspberry/90">Replace with candidate</button>
+      </footer>
+    `;
+    document.body.appendChild(this.finalModal);
+
+    this.finalClose = this.finalModal.querySelector('#final-close');
+    this.finalCurrent = this.finalModal.querySelector('#final-current');
+    this.finalCandidate = this.finalModal.querySelector('#final-candidate');
+    this.finalCurrentNotes = this.finalModal.querySelector(
+      '#final-current-notes'
+    );
+    this.finalCandidateNotes = this.finalModal.querySelector(
+      '#final-candidate-notes'
+    );
+    this.finalKeep = this.finalModal.querySelector('#final-keep');
+    this.finalReplace = this.finalModal.querySelector('#final-replace');
+
+    this.finalClose.addEventListener('click', () => this.closeFinalModal());
+    this.finalBackdrop.addEventListener('click', () => this.closeFinalModal());
+    this.finalKeep.addEventListener('click', () => this.closeFinalModal());
+    this.finalReplace.addEventListener('click', () => {
+      if (this.state.candidate) {
+        this.state.final = {
+          imageUrl: this.state.candidate.imageUrl,
+          notes: this.state.candidate.notes,
+        };
+        this.state.candidate = null;
+        this.closeFinalModal();
+        this.render();
+      }
+    });
+  }
+
   showFinalModal() {
+    this.ensureFinalModal();
     this.finalBackdrop.classList.remove('hidden');
     this.finalModal.classList.remove('hidden');
     if (!this.isFinalKeyListenerAttached) {
@@ -1019,8 +1078,12 @@ export class MoodCanvasApp {
   }
 
   closeFinalModal() {
-    this.finalBackdrop.classList.add('hidden');
-    this.finalModal.classList.add('hidden');
+    if (this.finalBackdrop) {
+      this.finalBackdrop.classList.add('hidden');
+    }
+    if (this.finalModal) {
+      this.finalModal.classList.add('hidden');
+    }
     if (this.isFinalKeyListenerAttached) {
       document.removeEventListener('keydown', this.handleEscapeKeydown);
       this.isFinalKeyListenerAttached = false;
