@@ -1,231 +1,90 @@
 # Product overview
 
-**MoodCanvas** is a **client-only** interior design assistant.
-A user uploads **one photo** (JPG/PNG, camera capture supported) of an **empty or near-empty room** and chats through a guided flow to:
-
-1. analyze the room, 2) explore **10 full-style renders** (gallery), 3) compare **A/B mini-variants** for up to 3 favorites, and 4) get **3 hero renders (Smart Mixed)** plus a **60-30-10 palette**, **5 quick wins**, and a **mini shopping list** (neutral specs only).
-   All AI calls use **Google Gemini** with **Bring-Your-Own-Key** (BYOK). **No backend**; data persists locally.
+**MoodCanvas Iteration Flow** is a **client-only** interior design assistant that runs entirely in the browser. A user uploads a **main target room photo** (JPG/PNG, camera capture supported), optionally sets a **room purpose**, adds up to **two reference style images**, and steps through iterative AI-assisted rounds. Each round delivers **12 interior variants at 1024×682** (generated in a pool of 6). The user chooses favorites, adds **global guidance** plus **optional per-favorite notes**, and manually triggers the next iteration. Any generated variant can be **finalized** into a **high-res 1536×1024 render** accompanied by **build notes**. Final renders are compared side-by-side so the user can keep or replace the active final image. A **restart** wipes generated content while keeping inputs, settings, and the silent room brief.
 
 # Goals & non-goals
 
-**Goals (MVP)**
+## Goals
 
-- Single-photo based advisory for **empty rooms**; secondary cases (near-empty) should still work.
-- “Chat-style, linear” UX where each step appends a card; **strict backtrack**: changing an earlier answer removes subsequent cards.
-- **Inspiration Pulse** inside the analysis: top usage candidates + style fit.
-- **10-style gallery** (1 image per style) with **pool=5** parallel generation; **order by fit score** desc, no “recommended” badge.
-- Post-selection: **A/B mini-variants** for up to 3 styles (**Smart Mixed** axes from analysis) after a confirmation step.
-- Final: **3 hero renders (Smart Mixed)** after a confirmation step.
-- **Mini shopping list** = **3 impact items** from analysis + **2 function staples**, **no prices**.
-- **Strict JSON** analysis via Gemini (response schema enforced).
-- **Dark, relaxing UI** (Plum–Peach palette) with **Tailwind Play CDN**; **system sans** fonts.
+- Support a continuous IEC loop: upload → 12 suggestions → favorites & feedback → next round.
+- Allow 0–2 drag-sortable reference images that persist until changed.
+- Bundle each variant response as **one image plus one short text descriptor**.
+- Generate a **room brief** once per project (refresh when purpose changes) and append it to every prompt.
+- Provide manual **finalization**: high-res re-render + build notes with a compare-and-decide workflow.
+- Deliver a **mobile-first**, **dark Plum–Peach** themed UI with system sans typography.
 
-**Non-goals (MVP)**
+## Non-goals (MVP)
 
-- No user accounts; no server storage; no exports (ZIP/PDF/HTML) yet.
-- No multi-language UI (English only); internal units in **meters** only.
-- No accessibility hard targets (postponed).
-- No PWA/offline installation; **GitHub Pages** static hosting only.
-- No seed control/deduplication for renders; no price or shop links in the mini list.
+- No exports, backend services, accounts, pricing, or shop integrations.
+- No seed control, deduplication, or advanced accessibility targets in this iteration.
 
-# Primary use cases (supported room functions)
+# Architecture
 
-- Bedroom, Home-Office, Kids Room, Guest Room, Living Room, Dining Room, Hobby/Studio, Fitness/Yoga, Library/Reading, Music/Recording, Walk-in Closet, Storage/Utility, plus free-text “Other”.
+- **Client-only** web app hosted on GitHub Pages.
+- **Models**:
+  - `gemini-2.5-flash` for room briefs and descriptor repair.
+  - `gemini-2.5-flash-image` for iteration variants and finalization.
+- **Storage**: IndexedDB (via `idb`) using stores for `projects`, `events`, `media`, and `artifacts`.
+  - Per-project cap **150 MB**, global cap **600 MB**. LRU removes only full-resolution renders; thumbnails remain with a 30s undo window.
+- **Content Security Policy**: shipped via `<meta http-equiv="Content-Security-Policy">` inline with a loose MVP policy.
 
-# Architecture choices (and rationale)
+# Core UI flow
 
-- **Client-only web app**: privacy-forward, easy hosting (GitHub Pages), zero backend complexity.
-- **BYOK (Gemini)**: user supplies API key; no server secrets. Key stored **only in localStorage**.
-- **Models**: `gemini-2.5-flash` for **analysis**; `gemini-2.5-flash-image` for **renders**. Balanced cost/latency.
-- **Strict JSON** mode for analysis: `responseMimeType:"application/json"` + `responseSchema` → stable, machine-consumable output.
-- **Storage**: **IndexedDB** via tiny `idb` lib; **Hybrid model** (projects, events, media, artifacts). Local only.
-- **Styling**: Tailwind compiled locally (CLI) into static CSS; **Plum–Peach** dark palette; system sans.
-- **Hosting**: **GitHub Pages**; **CSP meta** (loose MVP) embedded in `index.html`.
+1. **Start** – Upload the main photo (long edge ≤ 2048 px) and optionally provide purpose, reference images (drag-sort), and initial guidance.
+2. **Room brief (silent)** – One call to `gemini-2.5-flash` producing a paragraph plus 3–5 bullet constraints; regenerates automatically when the purpose changes.
+3. **Iteration rounds** – Each round requests 12 variants at 1024×682 using a pool size of 6; tiles appear as soon as each finishes. Round prompts include the room brief, purpose, references (order-weighted), global guidance, and raw favorite descriptions (with optional notes). Round 1 exposes a start button; subsequent rounds surface a sticky generate bar once at least one favorite is chosen. Tiles support per-item retry on failure.
+4. **Favorites & feedback** – Users mark favorites (selection resets each round but remains visible for reference) and may add per-favorite notes. Favorites feed directly into the next iteration prompt block alongside global guidance.
+5. **Finalization** – Selecting "Use as final" launches a high-res regeneration (1536×1024) plus build notes (5–7 sentences). Results open in a compare modal to keep or replace the current final render.
+6. **Restart** – Clears generated rounds, favorites, and final renders while preserving the base photo, purpose, references, room brief, and sampling settings.
 
-## Build step: Tailwind CSS
+Clicking any image opens it in a new tab at full resolution. The sticky generate bar provides a single-line guidance input, "Generate next iteration" button, and a Restart control.
 
-Run `npm run build:css` after editing HTML/JS classes to regenerate `styles/app.css`.
+# Prompt outlines
+
+- **Room brief (flash)** – Produce one paragraph (60–90 words) plus 3–5 bullets capturing constraints, camera/envelope discipline, and core heuristics.
+- **Iteration variant (flash-image)** – Inputs: base photo, 0–2 references (style transfer only), room brief, purpose, global guidance, raw favorite descriptions, and per-favorite notes. Instruct Gemini to return exactly one updated variant image (1024×682) and one short paragraph describing the mood, key changes, and 2–3 ideas for the next iteration.
+- **Finalization (flash-image)** – Inputs: base photo, selected variant (strict target), references. Request a faithful 1536×1024 polish plus one paragraph of build notes (5–7 sentences covering materials, palette, lighting, and 1–2 dimensional tips in meters).
+
+# Generation settings
+
+- Global sampling defaults: `temperature 0.7`, `topP 0.9`, `topK 32`. Stored in localStorage and applied to every call.
+- Iteration gallery size fixed at 1024×682; finalization renders at 1536×1024.
+
+# Error handling
+
+- Per-tile soft failures expose a retry button; no round-level cancel is available.
+- Hybrid parser for `flash-image` responses:
+  - Use the first image and first text segment.
+  - If text is missing, run an automatic mini call to `gemini-2.5-flash` to repair the descriptor.
+  - If the image is missing, mark the tile as failed and offer retry.
+- Restart confirmation prompts: “Clear all generated images and selections. Keep base photo, purpose, references, room brief and settings?”
+
+# Data handling
+
+- Accept JPG/PNG imports, correct EXIF orientation, and retain metadata.
+- Resize inputs before upload (long edge ≤ 2048 px at ~0.9 JPEG quality).
+- Persist originals plus 512 px thumbnails for inputs; store 1024 px variants (with thumbs) and 1536 px finals (with thumbs).
+- References remain sticky until replaced; their order reflects weighting.
 
 # Security & privacy
 
-- **Key handling**:
-  - BYOK banner (“Get your key… Google AI Studio. The key is stored only in your browser”).
-  - Store in **localStorage**; **Settings modal** offers “Remove key from this device”.
-  - No validation calls; optional superficial prefix hint (keys often start `AIza…`).
-  - Send key in header `x-goog-api-key` (not query).
+- **Bring Your Own Key** banner links to Google AI Studio and explains that the API key stays in the browser.
+- Keys are stored in `localStorage` and added to requests via the `x-goog-api-key` header.
+- Informational help replaces any consent gate.
 
-- **Images & metadata**:
-  - Allow **JPG/PNG**. Accept EXIF orientation; **do not strip metadata** for MVP; send “as-is”.
-  - Resize **before upload**: long side **≤ 2048 px** (q≈0.9).
-  - No additional consent gate (info lives in Help/README).
+# UI structure
 
-- **CSP (loose MVP)**:
+- Header with app name and settings button.
+- Key banner (visible when no API key is stored).
+- Main area containing: project setup card, room brief summary, and a stack of iteration rounds (only the last two remain expanded).
+- Sticky generate bar at the bottom once favorites exist.
+- Modals: settings and restart confirmation; final compare overlay for high-res results.
+- Full-screen image views open in a new browser tab.
 
-  ```
-   default-src 'self';
-   img-src 'self' blob: data:;
-   connect-src https://generativelanguage.googleapis.com;
-   script-src 'self';
-   style-src 'self';
-   object-src 'none'; base-uri 'self';
-  ```
+# Testing plan
 
-# Data model (IndexedDB – Hybrid)
-
-Stores (via `idb`):
-
-- **projects** `{ id, name, createdAt, updatedAt, settings { units:"m", theme:"plum-peach" }, caps { perProjectMB:150 } }`
-- **events** (append-only timeline) `{ id, projectId, type, payload, createdAt }`
-  Types: `upload_image`, `analysis_done`, `gallery_generated`, `ab_generated`, `hero_generated`, `selection_changed`, `warning`, `error`, etc.
-- **media** (blobs & thumbs) `{ id, projectId, kind:"input|render|thumb", bytes|blob, mime, width, height, relatedId, createdAt }`
-  Import: store **original** + **512px thumb**. Renders: store full + thumb.
-- **artifacts** (JSON/text) `{ id, projectId, kind:"analysis|prompts|palette|quickwins|shoppinglist", json, createdAt }`
-
-**Storage caps & cleanup**
-
-- Output JPEG q≈0.85; thumbs 384px.
-- **Per-project cap 150 MB**, **global cap 600 MB**.
-- **LRU auto-delete** oldest **full-res renders** when over cap; thumbs remain; 30s undo toast.
-
-# UX flow (chat-like, linear; strict backtrack)
-
-Cards appear top→down; editing an earlier card **removes all later cards**.
-
-1. **UploadCard**
-   - `<input type="file" accept="image/jpeg,image/png" capture="environment">`
-   - Shows selected image preview.
-   - Minimal import normalization: **fix EXIF orientation**, store original + 512 thumb.
-
-2. **KeyBanner** (only if no key is present)
-   - Text: “Get your key… Google AI Studio. The key is stored only in your browser.” (link).
-   - Paste field to save key. No validation.
-
-3. **Inspiration Pulse + Function/Scope Quick Pick**
-   - One **Single-Analysis** call (strict JSON) returns `usage_candidates`.
-   - Show top 3 as an “Inspiration” bubble.
-   - User explicitly selects **intended use** and **scope (1–4)** (short picker).
-   - **Low scale confidence** → small non-blocking warning banner.
-
-4. **AnalysisCard**
-   - Renders JSON summary: `photo_findings`, `palette_60_30_10`, `quick_wins` (top 5), `styles_top10` order and scores.
-
-5. **StyleGalleryCard**
-   - Generates **10 full renders** (one per style) **in parallel** with **pool=5**; default size **1536×1024**.
-   - User can adjust **count (6/8/10)** and **size (1024/1536)** before running.
-   - Tiles **ordered by fit_score desc**; **corner chip** shows style name.
-   - Per-tile **soft fail** → small error chip + **Retry**.
-
-6. **SelectionCard**
-   - Select **up to 3 favorites**.
-
-7. **A/B Mini-Variants**
-   - Confirmation card shows “N favorites × 2 images”.
-   - Generate per favorite 2 images using **smart_mixed_axes** from analysis; pool=5.
-
-8. **HeroRenderCard** (final)
-   - Confirmation card (“3 images @ 1536×1024”).
-   - Generate **3 hero renders (Smart Mixed)**.
-   - Derive **60-30-10 palette**, **5 Quick Wins**, and **mini shopping list** here.
-
-9. **QuickWins & Mini List**
-   - Show **5 actionable items** (concise rules, e.g., distances in meters).
-   - **Mini list (5 items)** = 3 highest-impact + 2 function staples; **no prices**.
-
-10. **Settings modal**
-
-- “Remove key from this device”.
-
-**Image viewer**: tapping any image opens it in a **new tab** (full size).
-
-# Rendering models & call strategy
-
-- **Analysis**: `POST v1beta/models/gemini-2.5-flash:generateContent`
-  - `contents`: user text prompt (spec below) + **inlineData** image (base64, ≤2048 px long side).
-  - `generationConfig`:
-    - `responseMimeType: "application/json"`
-    - `responseSchema: ANALYSIS_SCHEMA` (see “Strict JSON schema”).
-
-- **Renders (gallery, A/B, hero)**: `gemini-2.5-flash-image` (image-to-image)
-  - Inputs: original image + per-style/variant **prompt** from `render_gallery[]` (or templates below).
-  - Concurrency: **5 at a time**.
-  - Errors: per-tile retry button; analysis errors show a single toast with **Retry**.
-
-**Timeouts & retries (Safe Defaults)**
-
-- Analysis timeout **45s**; Render timeout **120s**.
-- Retry up to **2×** on **429 / 5xx / network** with 500ms/1500ms backoff.
-- **AbortController** cancels in-flight calls if a prior step changes.
-
-# Prompts (finalized for MVP)
-
-**Single-Analysis (user content)**
-Use the version shared earlier (“ROLE: Interior design analyst for empty rooms…”) including context, inputs, and output rules.
-
-- Language: **English**; units **meters**.
-- Geometry: treat camera pose + envelope as fixed (unless scope=4).
-- Return **only JSON** (no prose) because strict mode is used.
-
-**Render templates**
-
-- 10 styles: **Scandi, Japandi, Modern Minimal, Contemporary Cozy, Mid-Century, Industrial Soft, Boho, Rustic, Mediterranean, Art-Deco**.
-- Base constraints for image-to-image: keep camera pose and room envelope; respect **intervention_scope**; reflect **palette_60_30_10** subtly; avoid logos/text; photorealistic lighting.
-- A/B Mini: vary along `smart_mixed_axes.axisA` vs `axisB` as specified.
-- Hero (3): Smart Mixed (A, B, and best-of-both).
-
-# Strict JSON schema (analysis)
-
-The approved **ANALYSIS_SCHEMA** (JSON Schema 2020-12) is part of the app and sent to Gemini in `responseSchema`.
-
-- Required sections: `usage_candidates`, `photo_findings`, `palette_60_30_10`, `constraints`, `quick_wins`, `styles_top10`, `smart_mixed_axes`, `negative_prompts`, `safety_checks`, `render_gallery`.
-- Enumerations and exact counts are now handled at the prompt/UX level (schema only asserts basic shapes) to avoid overwhelming Gemini with state explosion.
-- Numeric ranges and string patterns (confidence 0-1, hex codes, etc.) are enforced via prompt instructions and client-side validation instead of schema constraints.
-- `scale_guesses` allows `null` for width/depth/height with explicit `confidence` via `nullable: true` on numeric fields (no range bounds in-schema).
-
-# UI & styling
-
-- **Theme**: Dark **Plum–Peach**
-  - `bg #392338`, `surface #3F2840`, `surface2 #462E49`, `text #EDEDED`, `textMuted #CFC7D2`, `accent #FFCFA4`, `accent2 #FF947F`, `cta #C1264E`.
-
-- **Tailwind**: Play CDN; inline `tailwind.config` extends the above tokens; border radius `xl2`.
-- **Components**: Header, HomeGrid, KeyBanner, ChatTimeline (cards listed above), Modals (Settings, Error).
-
-# Error handling & edge cases
-
-- **No key**: show BYOK banner with AI Studio link; block calls; everything else visible.
-- **Low scale confidence**: show non-blocking warning; proceed.
-- **Analysis invalid**: strict JSON mode prevents schema drift; if API error, show retry toast.
-- **Gallery tile fails**: show per-tile error chip + Retry; other tiles continue.
-- **Rate limit spikes**: rely on per-tile behavior + two backoff retries; no global pause in MVP.
-- **Network loss**: calls fail; show retry.
-- **Storage cap exceeded**: auto-purge oldest full-res renders (thumbs remain) + 30s undo.
-- **Backtrack**: editing any earlier card **removes** later cards and cancels in-flight requests.
-
-# Browser support
-
-- **Mobile-priority**: Chrome (Android) and Safari (iOS) prioritized; desktop browsers “best effort” (latest Chrome/Edge/Firefox/Safari).
-- Camera capture relies on `<input capture="environment">` (browser support varies; gracefully falls back to picker).
-
-# Testing plan (high level, MVP)
-
-- **Analysis Strict-JSON Harness** (in-browser):
-  - Given a room photo and a valid hard-coded key, when calling analysis, then the response **parses** and **validates** against `ANALYSIS_SCHEMA` with Ajv → **PASS**.
-  - Negative tests: extra fields → FAIL; wrong enum → FAIL; non-10 `styles_top10` length → FAIL.
-  - Edge: `scale_guesses` `null` values + low confidence should **PASS**.
-
-- **Prompt sanity**: snapshots of rendered prompts for each style to avoid accidental drift in future edits.
-
-- **Render pipeline smoke**: with mocks (if key absent) ensure UI handles tiles loading, success, and per-tile failure states.
-
-# Deployment
-
-- **GitHub Pages**, single `index.html` entry (root), relative asset paths.
-- Add `.nojekyll` to avoid Jekyll processing.
-- Keep CSP meta in `index.html`.
-
-# Iteration development process rules
-
-1. **Do exactly one prioritized task per iteration.** Before/after: run relevant checks (build/lint/tests or in-browser harness).
-2. **When adding/updating tests**, include a brief “why this test matters” note to guide future changes.
-3. **Before adding functionality**, search the codebase (ripgrep) to confirm it’s missing; if present, prefer **refactor** over re-implementation.
-4. **After each iteration**, add a concise update to `docs/implementation-progress.md` (what changed, decisions, follow-ups).
-5. **Prefer CI-friendly, non-interactive commands/reporters** where possible so runs can be automated later.
+- Room brief generation persists paragraph and bullets and regenerates when the purpose changes.
+- Iteration runs surface 12 tiles with descriptors, repairing missing text and exposing retry for missing images.
+- Finalization yields a high-res render plus build notes and allows keep/replace against the current final.
+- Parser utilities cover success, missing-image, and text-repair paths.
+- Storage caps trigger LRU removal of oldest full-resolution renders while preserving thumbnails.

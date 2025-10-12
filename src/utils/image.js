@@ -1,36 +1,62 @@
 /* istanbul ignore file */
 
-export async function normalizeImageFile(file) {
+export async function normalizeImageFile(
+  file,
+  { maxSide = 2048, thumbSide = 512, quality = 0.92 } = {}
+) {
   if (!(file instanceof Blob)) {
     throw new TypeError('Expected a File or Blob instance');
   }
 
   const blob = file.slice(0, file.size, file.type || 'image/jpeg');
   const bitmap = await createImageBitmapWithOrientation(blob);
-  const original = await drawBitmapToBlob(bitmap, blob.type);
-  const thumb = await createThumbnail(bitmap, blob.type);
+  const baseSize = getBitmapSize(bitmap);
+  const originalScale =
+    typeof maxSide === 'number' && maxSide > 0
+      ? Math.min(1, maxSide / Math.max(baseSize.width, baseSize.height))
+      : 1;
+  const thumbScale =
+    typeof thumbSide === 'number' && thumbSide > 0
+      ? Math.min(1, thumbSide / Math.max(baseSize.width, baseSize.height))
+      : 1;
+
+  const originalWidth = Math.round(baseSize.width * originalScale);
+  const originalHeight = Math.round(baseSize.height * originalScale);
+  const thumbWidth = Math.round(baseSize.width * thumbScale);
+  const thumbHeight = Math.round(baseSize.height * thumbScale);
+
+  const original = await resizeBitmapToBlob(
+    bitmap,
+    blob.type,
+    maxSide,
+    quality
+  );
+  const thumb = await resizeBitmapToBlob(bitmap, blob.type, thumbSide, quality);
 
   return {
     original,
     thumb,
-    width: bitmap.width,
-    height: bitmap.height,
+    width: originalWidth,
+    height: originalHeight,
+    thumbWidth,
+    thumbHeight,
   };
 }
 
-async function createThumbnail(bitmap, mime) {
+async function resizeBitmapToBlob(
+  bitmap,
+  mime,
+  targetLongSide,
+  quality = 0.92
+) {
   const size = getBitmapSize(bitmap);
   const longest = Math.max(size.width, size.height);
-  const scale = longest > 512 ? 512 / longest : 1;
-  const width = Math.round(size.width * scale);
-  const height = Math.round(size.height * scale);
-  return drawBitmapToBlob(bitmap, mime, width, height, 0.9);
-}
-
-async function drawBitmapToBlob(bitmap, mime, width, height, quality = 0.92) {
-  const size = getBitmapSize(bitmap);
-  const targetWidth = width ?? size.width;
-  const targetHeight = height ?? size.height;
+  const scale =
+    typeof targetLongSide === 'number' && targetLongSide > 0
+      ? Math.min(1, targetLongSide / longest)
+      : 1;
+  const targetWidth = Math.round(size.width * scale);
+  const targetHeight = Math.round(size.height * scale);
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
   canvas.height = targetHeight;

@@ -27,3 +27,10 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03 (Iteration v2 rebuild)
+
+- Replaced the chat-style workflow with the Iteration 2 spec: upload main room photo, optional purpose, and drag-sortable references feeding a silent room brief and 12-image iteration rounds.
+- Implemented Gemini flash wrappers for room briefs, iterative variants, and hi-res finalization with hybrid parsing and text auto-repair, plus a diversity deck pool runner (6 concurrent).
+- Added the new sticky generate bar, per-tile favorites with optional notes, restart flow, and final compare modal, keeping BYOK handling and sampling controls intact.
+- Introduced unit tests for the flash-image parser to cover successful, missing-image, and text-repair scenarios.
