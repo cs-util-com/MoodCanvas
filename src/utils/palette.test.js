@@ -46,6 +46,10 @@ describe('generatePaletteVariations', () => {
       expect(palettesEqual(variant, base)).toBe(false);
     });
   });
+
+  it('returns empty array when the base palette is missing', () => {
+    expect(generatePaletteVariations(null)).toEqual([]);
+  });
 });
 
 describe('ensurePaletteOptions', () => {
@@ -119,6 +123,31 @@ describe('ensurePaletteOptions', () => {
     const options = ensurePaletteOptions(analysis);
     expect(options).toHaveLength(1);
     expect(options[0].primary?.name).toBe('Untinted base');
+  });
+
+  it('stops collecting additional palettes once five options are assembled', () => {
+    const base = buildBasePalette();
+    const provided = [
+      '#112233',
+      '#223344',
+      '#334455',
+      '#445566',
+      '#556677',
+      '#667788',
+    ].map((hex, index) => ({
+      primary: { hex, name: `Primary ${index}` },
+      secondary: { hex: '#8899AA' },
+      accent: { hex: '#AABBCC' },
+    }));
+
+    const options = ensurePaletteOptions({
+      palette_60_30_10: base,
+      palette_options: provided,
+    });
+
+    expect(options).toHaveLength(5);
+    const collectedSignatures = options.map(signature);
+    expect(collectedSignatures).not.toContain(signature(provided[5]));
   });
 });
 

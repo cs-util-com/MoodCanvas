@@ -290,6 +290,28 @@ describe('normalizeRenderGallery', () => {
     expect(scandi.prompt).toContain('#778899');
   });
 
+  test('enters fallback fill path when fewer than ten supported styles exist', () => {
+    const originalStyles = [...SUPPORTED_STYLES];
+    SUPPORTED_STYLES.splice(0, SUPPORTED_STYLES.length, 'Scandi', 'Japandi');
+
+    try {
+      const analysis = {
+        render_gallery: [],
+        styles_top10: [{ style: 'Scandi', why: 'Calm balance' }],
+        negative_prompts: [],
+        photo_findings: {},
+      };
+
+      const normalized = normalizeRenderGallery(analysis);
+      expect(normalized).toHaveLength(2);
+      expect(
+        normalized.every((item) => SUPPORTED_STYLES.includes(item.style))
+      ).toBe(true);
+    } finally {
+      SUPPORTED_STYLES.splice(0, SUPPORTED_STYLES.length, ...originalStyles);
+    }
+  });
+
   test('returns empty array when analysis missing', () => {
     expect(normalizeRenderGallery(null)).toEqual([]);
   });
