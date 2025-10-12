@@ -57,6 +57,12 @@ export class MoodCanvasApp {
     };
     this.unsubscribeKey = null;
     this.draggedReferenceIndex = null;
+    this.isFinalKeyListenerAttached = false;
+    this.handleEscapeKeydown = (event) => {
+      if (event.key === 'Escape') {
+        this.closeFinalModal();
+      }
+    };
   }
 
   async init() {
@@ -70,6 +76,10 @@ export class MoodCanvasApp {
     if (this.unsubscribeKey) {
       this.unsubscribeKey();
       this.unsubscribeKey = null;
+    }
+    if (this.isFinalKeyListenerAttached) {
+      document.removeEventListener('keydown', this.handleEscapeKeydown);
+      this.isFinalKeyListenerAttached = false;
     }
   }
 
@@ -228,11 +238,6 @@ export class MoodCanvasApp {
       }
     });
 
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        this.closeFinalModal();
-      }
-    });
   }
   async bootstrapProject() {
     const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
@@ -973,12 +978,20 @@ export class MoodCanvasApp {
   showFinalModal() {
     this.finalBackdrop.classList.remove('hidden');
     this.finalModal.classList.remove('hidden');
+    if (!this.isFinalKeyListenerAttached) {
+      document.addEventListener('keydown', this.handleEscapeKeydown);
+      this.isFinalKeyListenerAttached = true;
+    }
     this.renderFinalModal();
   }
 
   closeFinalModal() {
     this.finalBackdrop.classList.add('hidden');
     this.finalModal.classList.add('hidden');
+    if (this.isFinalKeyListenerAttached) {
+      document.removeEventListener('keydown', this.handleEscapeKeydown);
+      this.isFinalKeyListenerAttached = false;
+    }
   }
 
   handleRestart() {
