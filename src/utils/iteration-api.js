@@ -1,4 +1,4 @@
-import { blobToBase64 } from './image.js';
+import { blobToBase64, base64ToBlob } from './image.js';
 
 export const GEMINI_TEXT_MODEL = 'models/gemini-2.5-flash:generateContent';
 export const GEMINI_IMAGE_MODEL =
@@ -110,8 +110,8 @@ export class IterationApi {
         /^image\//i.test(part.inlineData.mimeType || '')
       ) {
         const base64 = part.inlineData.data || part.inlineData.bytes || '';
-        const mimeType = part.inlineData.mimeType || 'application/octet-stream';
-        out.imageUrl = `data:${mimeType};base64,${base64}`;
+        const blob = base64ToBlob(base64, part.inlineData.mimeType);
+        out.imageUrl = URL.createObjectURL(blob);
       }
       if (!out.text && typeof part.text === 'string' && part.text.trim()) {
         out.text = part.text.trim();

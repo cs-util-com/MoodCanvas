@@ -3,10 +3,16 @@ import { IterationApi } from './iteration-api.js';
 describe('IterationApi', () => {
   let client;
   let api;
+  let originalCreateObjectURL;
   let originalFetch;
   const createResponse = (parts) => ({ candidates: [{ content: { parts } }] });
 
   beforeEach(() => {
+    if (!global.URL) {
+      global.URL = {};
+    }
+    originalCreateObjectURL = global.URL.createObjectURL;
+    global.URL.createObjectURL = jest.fn(() => 'blob:test');
     originalFetch = global.fetch;
     global.fetch = jest.fn(() =>
       Promise.resolve({
@@ -18,6 +24,11 @@ describe('IterationApi', () => {
   });
 
   afterEach(() => {
+    if (originalCreateObjectURL) {
+      global.URL.createObjectURL = originalCreateObjectURL;
+    } else {
+      delete global.URL.createObjectURL;
+    }
     global.fetch = originalFetch;
     jest.clearAllMocks();
   });
@@ -36,7 +47,7 @@ describe('IterationApi', () => {
       mimeMain: 'image/png',
     });
 
-    expect(result.imageUrl).toBe(`data:image/png;base64,${btoa('fake')}`);
+    expect(result.imageUrl).toBe('blob:test');
     expect(result.text).toBe('Mood description');
     expect(result.warnings).toEqual([]);
     expect(client.generateContent).toHaveBeenCalledTimes(1);
@@ -56,7 +67,7 @@ describe('IterationApi', () => {
       mimeMain: 'image/png',
     });
 
-    expect(result.imageUrl).toBe(`data:image/png;base64,${btoa('fake-bytes')}`);
+    expect(result.imageUrl).toBe('blob:test');
     expect(result.text).toBe('Bytes payload');
   });
 
@@ -192,7 +203,7 @@ describe('IterationApi', () => {
     });
 
     expect(result.text).toBe('Build notes paragraph');
-    expect(result.imageUrl).toBe(`data:image/png;base64,${btoa('image')}`);
+    expect(result.imageUrl).toBe('blob:test');
     expect(client.generateContent).toHaveBeenCalledTimes(1);
   });
 
