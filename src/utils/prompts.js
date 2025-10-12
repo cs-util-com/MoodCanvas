@@ -50,10 +50,14 @@ export function normalizeRenderGallery(analysis, paletteOverride) {
   if (!analysis) return [];
 
   const existing = Array.isArray(analysis.render_gallery)
-    ? analysis.render_gallery.filter((item) => item && typeof item.style === 'string')
+    ? analysis.render_gallery.filter(
+        (item) => item && typeof item.style === 'string'
+      )
     : [];
   const styleScores = Array.isArray(analysis.styles_top10)
-    ? analysis.styles_top10.filter((item) => item && typeof item.style === 'string')
+    ? analysis.styles_top10.filter(
+        (item) => item && typeof item.style === 'string'
+      )
     : [];
 
   const palette = paletteOverride ?? analysis.palette_60_30_10;
@@ -74,7 +78,9 @@ export function normalizeRenderGallery(analysis, paletteOverride) {
     }
   }
 
-  const styleReason = new Map(styleScores.map((item) => [item.style, item.why]));
+  const styleReason = new Map(
+    styleScores.map((item) => [item.style, item.why])
+  );
   const existingByStyle = new Map(existing.map((item) => [item.style, item]));
   const results = [];
   const used = new Set();
@@ -163,7 +169,9 @@ function buildGalleryFallback({
   if (limitations?.length) {
     promptLines.push(`Respect constraints: ${limitations.join('; ')}.`);
   }
-  promptLines.push(`Highlight signature ${style} materials, silhouettes, and styling.`);
+  promptLines.push(
+    `Highlight signature ${style} materials, silhouettes, and styling.`
+  );
   if (negativePrompts.length) {
     promptLines.push(`Avoid: ${negativePrompts.join('; ')}.`);
   }

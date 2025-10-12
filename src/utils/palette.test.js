@@ -152,6 +152,8 @@ describe('generatePaletteVariations with grayscale input', () => {
     const variants = generatePaletteVariations(base);
     expect(variants.length).toBeGreaterThanOrEqual(4);
     expect(new Set(variants.map(signature)).size).toBe(variants.length);
-    expect(variants.some((variant) => variant.primary.hex !== '#777777')).toBe(true);
+    expect(variants.some((variant) => variant.primary.hex !== '#777777')).toBe(
+      true
+    );
   });
 });

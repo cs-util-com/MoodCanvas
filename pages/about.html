@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
@@ -14,46 +14,92 @@
     <div class="min-h-full">
       <header class="border-b border-plum-border/50 bg-plum-surface">
         <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8">
-          <a href="../index.html" class="text-xs uppercase tracking-[0.3em] text-peach/80">MoodCanvas</a>
+          <a
+            href="../index.html"
+            class="text-xs uppercase tracking-[0.3em] text-peach/80"
+            >MoodCanvas</a
+          >
           <h1 class="text-3xl font-semibold text-white">About the project</h1>
           <p class="text-sm text-peach/80 max-w-2xl">
-            MoodCanvas is a privacy-forward, client-only interior design assistant. It turns a single empty-room photo into guided inspiration, AI renders, and actionable follow-up steps—all without leaving the browser.
+            MoodCanvas is a privacy-forward, client-only interior design
+            assistant. It turns a single empty-room photo into guided
+            inspiration, AI renders, and actionable follow-up steps—all without
+            leaving the browser.
           </p>
         </div>
       </header>
       <main class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-10">
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">Why client-only?</h2>
           <p class="mt-3 text-sm text-peach/80">
-            Users bring their own Gemini API key (BYOK) and every asset—from the room photo to AI renders—stays in the browser. IndexedDB stores the working project so the session remains private and responsive.
+            Users bring their own Gemini API key (BYOK) and every asset—from the
+            room photo to AI renders—stays in the browser. IndexedDB stores the
+            working project so the session remains private and responsive.
           </p>
         </section>
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">Design language</h2>
           <ul class="mt-4 space-y-3 text-sm text-peach/80">
-            <li><span class="text-white font-medium">Plum–Peach dark palette</span> keeps focus on photography and accent cues.</li>
-            <li><span class="text-white font-medium">Chat-style timeline</span> mirrors a guided consultation—every edit rewinds dependent steps.</li>
-            <li><span class="text-white font-medium">System sans typography</span> for a calm, readable rhythm.</li>
+            <li>
+              <span class="text-white font-medium"
+                >Plum–Peach dark palette</span
+              >
+              keeps focus on photography and accent cues.
+            </li>
+            <li>
+              <span class="text-white font-medium">Chat-style timeline</span>
+              mirrors a guided consultation—every edit rewinds dependent steps.
+            </li>
+            <li>
+              <span class="text-white font-medium">System sans typography</span>
+              for a calm, readable rhythm.
+            </li>
           </ul>
         </section>
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">Core capabilities</h2>
           <div class="mt-4 grid gap-4 md:grid-cols-2">
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Room analysis</h3>
-              <p class="mt-2">Strict JSON schema ensures every Gemini response includes palette, constraints, and top-ten styles.</p>
+              <p class="mt-2">
+                Strict JSON schema ensures every Gemini response includes
+                palette, constraints, and top-ten styles.
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Render pipeline</h3>
-              <p class="mt-2">Gallery, A/B variants, and hero renders run with pooled concurrency for smooth progress.</p>
+              <p class="mt-2">
+                Gallery, A/B variants, and hero renders run with pooled
+                concurrency for smooth progress.
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Actionable follow-up</h3>
-              <p class="mt-2">Quick wins, Smart Mixed palette, and a neutral mini shopping list conclude every session.</p>
+              <p class="mt-2">
+                Quick wins, Smart Mixed palette, and a neutral mini shopping
+                list conclude every session.
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Local persistence</h3>
-              <p class="mt-2">IndexedDB keeps projects capped at 150&nbsp;MB each, with automatic cleanup of older renders.</p>
+              <p class="mt-2">
+                IndexedDB keeps projects capped at 150&nbsp;MB each, with
+                automatic cleanup of older renders.
+              </p>
             </article>
           </div>
         </section>

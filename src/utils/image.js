@@ -37,13 +37,17 @@ async function drawBitmapToBlob(bitmap, mime, width, height, quality = 0.92) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
   const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (!result) {
-        reject(new Error('Unable to create blob from canvas'));
-        return;
-      }
-      resolve(result);
-    }, mime, quality);
+    canvas.toBlob(
+      (result) => {
+        if (!result) {
+          reject(new Error('Unable to create blob from canvas'));
+          return;
+        }
+        resolve(result);
+      },
+      mime,
+      quality
+    );
   });
   return blob;
 }

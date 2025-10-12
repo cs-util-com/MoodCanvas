@@ -6,7 +6,12 @@ import {
   onKeyChange,
 } from '../utils/key-store.js';
 import { GeminiClient } from '../utils/gemini-client.js';
-import { normalizeImageFile, blobToBase64, blobToDataUrl, base64ToBlob } from '../utils/image.js';
+import {
+  normalizeImageFile,
+  blobToBase64,
+  blobToDataUrl,
+  base64ToBlob,
+} from '../utils/image.js';
 import {
   ensureProject,
   getProject,
@@ -130,13 +135,15 @@ export class MoodCanvasApp {
       this.keyInput.value = this.state.apiKey;
     });
 
-    this.settingsModal.querySelector('form').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const formData = new FormData(event.currentTarget);
-      const key = formData.get('geminiKey');
-      saveGeminiKey(key ?? '');
-      this.settingsModal.close();
-    });
+    this.settingsModal
+      .querySelector('form')
+      .addEventListener('submit', (event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        const key = formData.get('geminiKey');
+        saveGeminiKey(key ?? '');
+        this.settingsModal.close();
+      });
 
     this.clearKeyBtn.addEventListener('click', () => {
       clearGeminiKey();
@@ -212,7 +219,8 @@ export class MoodCanvasApp {
 
   renderUploadCard() {
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
     card.innerHTML = `
       <div class="flex items-start justify-between gap-4">
         <div>
@@ -248,20 +256,24 @@ export class MoodCanvasApp {
 
   renderKeyBanner() {
     const banner = document.createElement('section');
-    banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
+    banner.className =
+      'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
     banner.innerHTML = `
       <div class="font-medium">Bring your own Google Gemini key</div>
   <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
       <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
     `;
-    banner.querySelector('#openSettings').addEventListener('click', () => this.settingsModal.showModal());
+    banner
+      .querySelector('#openSettings')
+      .addEventListener('click', () => this.settingsModal.showModal());
     return banner;
   }
 
   renderPhotoCard() {
     const { photo } = this.state;
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
     card.innerHTML = `
       <h2 class="text-lg font-semibold">2. Confirm scope & intended function</h2>
       <div class="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
@@ -309,7 +321,8 @@ export class MoodCanvasApp {
 
   renderAnalysisCard() {
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
     card.innerHTML = `
       <h2 class="text-lg font-semibold">3. Analysis progress</h2>
       <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
@@ -323,7 +336,8 @@ export class MoodCanvasApp {
     const { analysis } = this.state;
     const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
 
     const paletteStatus = this.state.palette
       ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
@@ -338,7 +352,13 @@ export class MoodCanvasApp {
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
           <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">Inspiration pulse</h3>
           <div class="flex flex-wrap gap-2">
-            ${analysis.usage_candidates.slice(0, 3).map((item) => `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`).join('')}
+            ${analysis.usage_candidates
+              .slice(0, 3)
+              .map(
+                (item) =>
+                  `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`
+              )
+              .join('')}
           </div>
         </section>
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
@@ -366,7 +386,8 @@ export class MoodCanvasApp {
       if (paletteOptions.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'text-xs text-plum-muted';
-        empty.textContent = 'No palette suggestions available. You can still proceed once a palette is selected later.';
+        empty.textContent =
+          'No palette suggestions available. You can still proceed once a palette is selected later.';
         paletteGrid.appendChild(empty);
       } else {
         paletteOptions.forEach((option, index) => {
@@ -380,7 +401,10 @@ export class MoodCanvasApp {
 
   renderPaletteSwatch(label, info = {}) {
     const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
-    const name = typeof info.name === 'string' && info.name.trim().length > 0 ? info.name : '—';
+    const name =
+      typeof info.name === 'string' && info.name.trim().length > 0
+        ? info.name
+        : '—';
     const finish = typeof info.finish === 'string' ? info.finish : '';
     return `
       <div class="flex flex-col gap-2 text-xs text-center">
@@ -404,7 +428,9 @@ export class MoodCanvasApp {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
-      isSelected ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20' : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
+      isSelected
+        ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20'
+        : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
     }`;
 
     const statusBadge = isSelected
@@ -440,7 +466,10 @@ export class MoodCanvasApp {
         ...this.state.analysis,
         palette_60_30_10: palette,
       };
-      updatedAnalysis.render_gallery = normalizeRenderGallery(updatedAnalysis, palette);
+      updatedAnalysis.render_gallery = normalizeRenderGallery(
+        updatedAnalysis,
+        palette
+      );
       this.state.analysis = updatedAnalysis;
     }
     this.render();
@@ -448,7 +477,8 @@ export class MoodCanvasApp {
 
   renderGalleryCard() {
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
     const gallery = this.state.gallery;
     card.innerHTML = `
       <div class="flex flex-col gap-1">
@@ -464,9 +494,16 @@ export class MoodCanvasApp {
 
     const grid = card.querySelector('#galleryGrid');
     const prompts = this.state.analysis.render_gallery;
-    const combined = prompts.map((prompt) => ({ prompt, render: gallery.find((item) => item.style === prompt.style) ?? null }));
+    const combined = prompts.map((prompt) => ({
+      prompt,
+      render: gallery.find((item) => item.style === prompt.style) ?? null,
+    }));
     combined
-      .sort((a, b) => this.findStyleScore(b.prompt.style) - this.findStyleScore(a.prompt.style))
+      .sort(
+        (a, b) =>
+          this.findStyleScore(b.prompt.style) -
+          this.findStyleScore(a.prompt.style)
+      )
       .forEach(({ prompt, render }) => {
         const tile = document.createElement('button');
         tile.type = 'button';
@@ -496,12 +533,15 @@ export class MoodCanvasApp {
 
     if (this.state.favorites.size > 0) {
       const confirm = document.createElement('div');
-      confirm.className = 'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
+      confirm.className =
+        'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
       confirm.innerHTML = `
         <div>Generate A/B mini-variants for ${this.state.favorites.size} favorite styles.</div>
         <button class="rounded-full bg-coral/90 px-4 py-2 text-plum font-medium hover:bg-coral" ${this.state.loading ? 'disabled' : ''}>Launch A/B (${this.state.favorites.size * 2} images)</button>
       `;
-      confirm.querySelector('button').addEventListener('click', () => this.generateABVariants());
+      confirm
+        .querySelector('button')
+        .addEventListener('click', () => this.generateABVariants());
       card.appendChild(confirm);
     }
 
@@ -510,7 +550,8 @@ export class MoodCanvasApp {
 
   renderABCard() {
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
     card.innerHTML = `
       <div>
         <h2 class="text-lg font-semibold">6. A/B mini-variants</h2>
@@ -523,7 +564,8 @@ export class MoodCanvasApp {
     const grid = card.querySelector('#abGrid');
     this.state.abVariants.forEach((variant) => {
       const tile = document.createElement('article');
-      tile.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
+      tile.className =
+        'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
       tile.innerHTML = `
         <div class="relative aspect-[3/2] bg-plum-surface-2">
           ${variant.thumbUrl ? `<img src="${variant.thumbUrl}" alt="${variant.style} variant" class="h-full w-full object-cover" loading="lazy" />` : '<div class="flex h-full items-center justify-center text-xs text-plum-muted">Pending</div>'}
@@ -536,13 +578,16 @@ export class MoodCanvasApp {
       grid.appendChild(tile);
     });
 
-    card.querySelector('#generateHeroes').addEventListener('click', () => this.generateHeroRenders());
+    card
+      .querySelector('#generateHeroes')
+      .addEventListener('click', () => this.generateHeroRenders());
     return card;
   }
 
   renderHeroCard() {
     const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
     card.innerHTML = `
       <div>
         <h2 class="text-lg font-semibold">7. Hero renders</h2>
@@ -557,7 +602,8 @@ export class MoodCanvasApp {
       tile.href = render.fullUrl;
       tile.target = '_blank';
       tile.rel = 'noopener';
-      tile.className = 'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
+      tile.className =
+        'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
       tile.innerHTML = `
         <img src="${render.thumbUrl}" alt="Hero render" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy" />
         <span class="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wide">${render.variant}</span>
@@ -569,10 +615,13 @@ export class MoodCanvasApp {
   }
 
   renderInsightsCard() {
-  const card = document.createElement('section');
-  card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-  const quickWins = Array.isArray(this.state.quickWins) ? this.state.quickWins : [];
-  const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
+    const card = document.createElement('section');
+    card.className =
+      'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
+    const quickWins = Array.isArray(this.state.quickWins)
+      ? this.state.quickWins
+      : [];
+    const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
     card.innerHTML = `
       <div>
         <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
@@ -588,14 +637,16 @@ export class MoodCanvasApp {
         <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
           <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
           <ol class="space-y-3 text-sm text-plum-muted">
-            ${list.length > 0
-              ? list
-                  .map(
-                    (item) =>
-                      `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
-                  )
-                  .join('')
-              : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'}
+            ${
+              list.length > 0
+                ? list
+                    .map(
+                      (item) =>
+                        `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
+                    )
+                    .join('')
+                : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'
+            }
           </ol>
         </section>
       </div>
@@ -680,13 +731,17 @@ export class MoodCanvasApp {
         signal: controller.signal,
       });
       const normalizedAnalysis = { ...data };
-  const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
-      const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
+      const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
+      const defaultPalette =
+        paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
       if (defaultPalette) {
         normalizedAnalysis.palette_60_30_10 = defaultPalette;
       }
       normalizedAnalysis.palette_options = paletteOptions;
-      normalizedAnalysis.render_gallery = normalizeRenderGallery(normalizedAnalysis, defaultPalette);
+      normalizedAnalysis.render_gallery = normalizeRenderGallery(
+        normalizedAnalysis,
+        defaultPalette
+      );
       await saveArtifact(this.state.project.id, {
         kind: 'analysis',
         json: normalizedAnalysis,
@@ -700,7 +755,9 @@ export class MoodCanvasApp {
       this.state.paletteOptions = paletteOptions;
       this.state.palette = null;
       this.state.selectedPaletteIndex = null;
-      this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
+      this.state.warning = evaluateScaleConfidence(
+        normalizedAnalysis.constraints?.scale_guesses
+      );
     } catch (error) {
       if (error.code === 'missing-key') {
         this.settingsModal.showModal();
@@ -764,7 +821,9 @@ export class MoodCanvasApp {
     const variants = [];
     const axes = this.state.analysis.smart_mixed_axes;
     for (const style of this.state.favorites) {
-      const basePrompt = this.state.analysis.render_gallery.find((item) => item.style === style);
+      const basePrompt = this.state.analysis.render_gallery.find(
+        (item) => item.style === style
+      );
       if (!basePrompt) continue;
       const prompts = buildABPrompts(basePrompt.prompt, axes);
       for (let index = 0; index < prompts.length; index += 1) {
@@ -776,7 +835,8 @@ export class MoodCanvasApp {
           variants.push({
             style,
             variant: index === 0 ? axes.axisA.label : axes.axisB.label,
-            focus: index === 0 ? axes.axisA.description : axes.axisB.description,
+            focus:
+              index === 0 ? axes.axisA.description : axes.axisB.description,
             thumbUrl: assets.thumbUrl,
             fullUrl: assets.fullUrl,
           });
@@ -873,7 +933,8 @@ export class MoodCanvasApp {
 
   findStyleScore(style) {
     return (
-      this.state.analysis?.styles_top10.find((item) => item.style === style)?.score ?? 0
+      this.state.analysis?.styles_top10.find((item) => item.style === style)
+        ?.score ?? 0
     );
   }
 
@@ -899,13 +960,17 @@ async function createThumb(blob) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) {
-        resolve(result);
-      } else {
-        reject(new Error('Unable to create thumbnail'));
-      }
-    }, 'image/jpeg', 0.85);
+    canvas.toBlob(
+      (result) => {
+        if (result) {
+          resolve(result);
+        } else {
+          reject(new Error('Unable to create thumbnail'));
+        }
+      },
+      'image/jpeg',
+      0.85
+    );
   });
 }
 
@@ -921,4 +986,3 @@ function evaluateScaleConfidence(guesses) {
   }
   return null;
 }
-

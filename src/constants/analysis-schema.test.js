@@ -1,6 +1,11 @@
 import { ANALYSIS_SCHEMA } from './analysis-schema.js';
 
-const FORBIDDEN_KEYS = new Set(['$schema', '$id', 'additionalProperties', 'anyOf']);
+const FORBIDDEN_KEYS = new Set([
+  '$schema',
+  '$id',
+  'additionalProperties',
+  'anyOf',
+]);
 
 function collectForbiddenKeys(node, path = []) {
   const hits = [];
@@ -28,7 +33,8 @@ describe('ANALYSIS_SCHEMA', () => {
   });
 
   it('allows nullable scale guesses without numeric bounds', () => {
-    const scaleGuesses = ANALYSIS_SCHEMA.properties.constraints.properties.scale_guesses;
+    const scaleGuesses =
+      ANALYSIS_SCHEMA.properties.constraints.properties.scale_guesses;
     const sampleAxis = scaleGuesses.properties.width_m;
     expect(sampleAxis.properties.value.type).toBe('number');
     expect(sampleAxis.properties.value.nullable).toBe(true);

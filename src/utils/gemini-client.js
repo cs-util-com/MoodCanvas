@@ -105,7 +105,10 @@ export class GeminiClient {
   async #request({ model, body, timeoutMs, signal }) {
     this.#ensureKey();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error('Request timed out')),
+      timeoutMs
+    );
 
     const mergedSignal = signal
       ? mergeAbortSignals(signal, controller.signal)
@@ -122,14 +125,17 @@ export class GeminiClient {
         signal: mergedSignal,
       };
 
-      const response = await Reflect.apply(
-        this.fetchImpl,
-        globalThis,
-        [`${API_ROOT}/${model}`, requestOptions]
-      );
+      const response = await Reflect.apply(this.fetchImpl, globalThis, [
+        `${API_ROOT}/${model}`,
+        requestOptions,
+      ]);
 
       if (!response.ok) {
-        throw buildGeminiError(await safeJson(response), 'Gemini request failed', response.status);
+        throw buildGeminiError(
+          await safeJson(response),
+          'Gemini request failed',
+          response.status
+        );
       }
 
       return response;
@@ -140,7 +146,9 @@ export class GeminiClient {
 
   #ensureKey() {
     if (!this.apiKey) {
-      throw Object.assign(new Error('Gemini API key missing'), { code: 'missing-key' });
+      throw Object.assign(new Error('Gemini API key missing'), {
+        code: 'missing-key',
+      });
     }
   }
 }
@@ -149,7 +157,8 @@ function mergeAbortSignals(a, b) {
   if (!a) return b;
   if (!b) return a;
   const controller = new AbortController();
-  const abort = (event) => controller.abort(event?.target?.reason ?? a.reason ?? b.reason);
+  const abort = (event) =>
+    controller.abort(event?.target?.reason ?? a.reason ?? b.reason);
   a.addEventListener('abort', abort);
   b.addEventListener('abort', abort);
   return controller.signal;

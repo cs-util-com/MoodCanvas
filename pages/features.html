@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
@@ -14,46 +14,98 @@
     <div class="min-h-full">
       <header class="border-b border-plum-border/50 bg-plum-surface">
         <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8">
-          <a href="../index.html" class="text-xs uppercase tracking-[0.3em] text-peach/80">MoodCanvas</a>
+          <a
+            href="../index.html"
+            class="text-xs uppercase tracking-[0.3em] text-peach/80"
+            >MoodCanvas</a
+          >
           <h1 class="text-3xl font-semibold text-white">Feature overview</h1>
           <p class="text-sm text-peach/80 max-w-2xl">
-            A guided, linear workflow that takes you from one empty-room photo to 10 inspiration renders, Smart Mixed variants, and a neutral actionable plan.
+            A guided, linear workflow that takes you from one empty-room photo
+            to 10 inspiration renders, Smart Mixed variants, and a neutral
+            actionable plan.
           </p>
         </div>
       </header>
       <main class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-10">
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">Timeline stages</h2>
           <ol class="mt-4 space-y-4 text-sm text-peach/80">
-            <li><span class="text-white font-medium">Upload & key capture</span> — camera-ready input with EXIF orientation, BYOK stored only in localStorage.</li>
-            <li><span class="text-white font-medium">Room intelligence</span> — strict JSON analysis surfaces palette, quick wins, and Smart Mixed axes.</li>
-            <li><span class="text-white font-medium">Gallery & favorites</span> — 10 style renders ordered by fit score with backtrack-safe selection.</li>
-            <li><span class="text-white font-medium">A/B mini-variants</span> — up to three favorites explored along Smart Mixed axes.</li>
-            <li><span class="text-white font-medium">Hero finale</span> — three high-resolution Smart Mixed renders, palette recap, and mini shopping list.</li>
+            <li>
+              <span class="text-white font-medium">Upload & key capture</span> —
+              camera-ready input with EXIF orientation, BYOK stored only in
+              localStorage.
+            </li>
+            <li>
+              <span class="text-white font-medium">Room intelligence</span> —
+              strict JSON analysis surfaces palette, quick wins, and Smart Mixed
+              axes.
+            </li>
+            <li>
+              <span class="text-white font-medium">Gallery & favorites</span> —
+              10 style renders ordered by fit score with backtrack-safe
+              selection.
+            </li>
+            <li>
+              <span class="text-white font-medium">A/B mini-variants</span> — up
+              to three favorites explored along Smart Mixed axes.
+            </li>
+            <li>
+              <span class="text-white font-medium">Hero finale</span> — three
+              high-resolution Smart Mixed renders, palette recap, and mini
+              shopping list.
+            </li>
           </ol>
         </section>
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">Under the hood</h2>
           <div class="mt-4 grid gap-4 md:grid-cols-2">
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Gemini integration</h3>
-              <p class="mt-2">`gemini-2.5-flash` for JSON analysis, `gemini-2.5-flash-image` for gallery, A/B, and hero renders with pooled concurrency (5 at a time).</p>
+              <p class="mt-2">
+                `gemini-2.5-flash` for JSON analysis, `gemini-2.5-flash-image`
+                for gallery, A/B, and hero renders with pooled concurrency (5 at
+                a time).
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Storage model</h3>
-              <p class="mt-2">IndexedDB hybrid stores projects, timeline events, media blobs, and structured artifacts with automatic cap enforcement.</p>
+              <p class="mt-2">
+                IndexedDB hybrid stores projects, timeline events, media blobs,
+                and structured artifacts with automatic cap enforcement.
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Resilience</h3>
-              <p class="mt-2">Timeouts (45s/120s), retry hooks, and per-card error states keep the flow recoverable without reloading.</p>
+              <p class="mt-2">
+                Timeouts (45s/120s), retry hooks, and per-card error states keep
+                the flow recoverable without reloading.
+              </p>
             </article>
-            <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80">
+            <article
+              class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm text-peach/80"
+            >
               <h3 class="text-white font-semibold">Privacy banner</h3>
-              <p class="mt-2">No backend storage, no telemetry. Everything lives in the browser; removing the key wipes credentials instantly.</p>
+              <p class="mt-2">
+                No backend storage, no telemetry. Everything lives in the
+                browser; removing the key wipes credentials instantly.
+              </p>
             </article>
           </div>
         </section>
-        <section class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6">
+        <section
+          class="rounded-xl2 border border-plum-border/50 bg-plum-surface-2 p-6"
+        >
           <h2 class="text-xl font-semibold text-white">What’s next</h2>
           <ul class="mt-4 space-y-3 text-sm text-peach/80">
             <li>Export kit (PDF/ZIP) for sharing design outcomes.</li>
