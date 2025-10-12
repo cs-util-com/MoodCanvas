@@ -56,4 +56,23 @@ describe('MoodCanvasApp layout scaffolding', () => {
     app.closeFinalModal();
     app.destroy();
   });
+
+  test('generate bar toggles the hidden attribute with selection state', () => {
+    const app = new MoodCanvasApp(root);
+    app.renderShell();
+
+    app.state.rounds = [];
+    app.state.selectedForNext.clear();
+    app.renderGenerateBar();
+
+    expect(app.generateBar.hasAttribute('hidden')).toBe(true);
+
+    app.state.rounds.push({ id: 'round-1', tiles: [] });
+    app.state.selectedForNext.add('tile-1');
+    app.renderGenerateBar();
+
+    expect(app.generateBar.hasAttribute('hidden')).toBe(false);
+
+    app.destroy();
+  });
 });

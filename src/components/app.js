@@ -614,8 +614,10 @@ export class MoodCanvasApp {
     const allowBar = hasSelection && hasRounds;
     if (allowBar) {
       this.generateBar.classList.remove('hidden');
+      this.generateBar.removeAttribute('hidden');
     } else {
       this.generateBar.classList.add('hidden');
+      this.generateBar.setAttribute('hidden', '');
     }
     if (this.guidanceInput) {
       this.guidanceInput.value = this.state.roundGuidance;
