@@ -43,3 +43,11 @@
 ## 2025-10-12 (tile details toggle)
 
 - Replaced the unused tile "Details" button with a click-to-expand description that shows only a short preview by default and reveals the full copy plus user notes on demand, reducing visual noise while keeping the annotation flow intact.
+
+## 2025-10-12 (room structure guardrails)
+
+- Clarified iteration, gallery, and finalization prompts so Gemini keeps walls, openings, and ceiling heights fixed to the source photo.
+- Documented that reference images serve style cues only and must not influence room geometry.
+- Added unit test expectations around the new guardrail language to prevent regressions.
+
+```

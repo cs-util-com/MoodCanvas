@@ -26,7 +26,8 @@ export function buildIterationPrompt({
 }) {
   return [
     'Use the attached base room photo as fixed camera pose and architectural envelope.',
-    'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood)—not geometry.',
+    'Do not move, resize, or reshape walls, ceilings, openings, or built-ins; the room volume and dimensions are locked to the photo.',
+    'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood)—never their room shape, perspective, or architectural layout.',
     'Consider the following guidance:',
     `• Room brief (silent): ${roomBrief || 'None'}`,
     `• Intended use: ${purpose || 'None'}`,
@@ -35,7 +36,7 @@ export function buildIterationPrompt({
     '',
     `Diversity hint for this image: ${diversityHint || 'None'}`,
     '',
-    'Generate ONE updated interior variant at 1024×682. Preserve perspective and room envelope.',
+    'Generate ONE updated interior variant at 1024×682. Preserve perspective, room envelope, and structural boundaries exactly as shown.',
     'Return ONE image and ONE short free-text paragraph (single paragraph) describing the mood, the key changes vs the base, and 2–3 ideas for the next iteration. Avoid logos/text.',
   ].join('\n');
 }
@@ -83,6 +84,7 @@ export async function runIterationBatch({
 export function buildFinalizationPrompt() {
   return [
     'Use the attached base room photo as fixed camera & envelope and the attached selected child image as strict visual target.',
+    'Do not move architectural elements (walls, openings, ceiling heights); treat the room geometry as immutable.',
     'Produce ONE faithful high-resolution re-render at 1536×1024 (polish only; no new composition).',
     'Then return ONE short paragraph of Build Notes (5–7 sentences): materials & finishes, palette accents, lighting layers (day/evening), 1–2 dimensional tips in meters, and any “avoid” reminders. Avoid logos/text.',
   ].join(' ');

@@ -34,6 +34,10 @@ describe('iteration prompts', () => {
     expect(prompt).toContain(
       'Diversity hint for this image: slightly warmer palette'
     );
+    expect(prompt).toContain('Do not move, resize, or reshape walls');
+    expect(prompt).toContain(
+      'transfer only their style (palette, textures, furniture mood, lighting mood)—never their room shape'
+    );
   });
 
   it('uses fallback placeholders when data is missing', () => {
@@ -49,6 +53,7 @@ describe('iteration prompts', () => {
     const prompt = buildFinalizationPrompt();
     expect(prompt).toContain('1536×1024');
     expect(prompt).toContain('Build Notes');
+    expect(prompt).toContain('room geometry as immutable');
   });
 
   it('runs a full iteration batch and surfaces progress events', async () => {

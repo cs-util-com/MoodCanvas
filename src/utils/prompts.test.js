@@ -144,6 +144,8 @@ describe('normalizeRenderGallery', () => {
     expect(artDeco).toBeDefined();
     expect(artDeco.prompt).toContain('Art-Deco');
     expect(artDeco.guidance).toContain('Preserve existing architecture');
+    expect(artDeco.guidance).toContain('Room structure is fixed');
+    expect(artDeco.prompt).toContain('Do not relocate walls');
   });
 
   test('trims existing text values and falls back when empty', () => {
@@ -168,6 +170,7 @@ describe('normalizeRenderGallery', () => {
     expect(rustic.prompt).toBe('Custom rustic prompt');
     expect(rustic.focus).toBe('Rustic concept direction');
     expect(rustic.guidance).toContain('Preserve existing architecture');
+    expect(rustic.guidance).toContain('Room structure is fixed');
   });
 
   test('handles missing palette and limitations gracefully', () => {
@@ -211,6 +214,7 @@ describe('normalizeRenderGallery', () => {
     expect(boho.prompt).toContain('Golden hour glow');
     expect(boho.focus).toBe('Existing focus');
     expect(boho.guidance).toContain('Preserve existing architecture');
+    expect(boho.guidance).toContain('Room structure is fixed');
   });
 
   test('describes palette even when swatches are partial', () => {

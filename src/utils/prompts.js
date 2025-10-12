@@ -149,10 +149,13 @@ function buildGalleryFallback({
     );
   }
   guidanceParts.push('Preserve existing architecture and layout.');
+  guidanceParts.push(
+    'Room structure is fixed; no moving walls, openings, or ceiling lines.'
+  );
 
   const promptLines = [
     `Photorealistic interior render of the provided room styled as ${style}.`,
-    'Maintain the original camera angle, envelope, and proportions.',
+    'Maintain the original camera angle, envelope, and proportions. Do not relocate walls, doors, windows, or ceiling heights.',
   ];
 
   if (architecturalNotes) {
