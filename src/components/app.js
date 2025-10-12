@@ -1,924 +1,852 @@
 /* istanbul ignore file */
+
 import {
   readGeminiKey,
   saveGeminiKey,
   clearGeminiKey,
   onKeyChange,
 } from '../utils/key-store.js';
-import { GeminiClient } from '../utils/gemini-client.js';
-import { normalizeImageFile, blobToBase64, blobToDataUrl, base64ToBlob } from '../utils/image.js';
-import {
-  ensureProject,
-  getProject,
-  saveMedia,
-  saveArtifact,
-  appendEvent,
-} from '../utils/project-store.js';
-import { SUPPORTED_ROOM_FUNCTIONS } from '../constants/analysis-schema.js';
-import {
-  buildAnalysisPrompt,
-  buildABPrompts,
-  buildHeroPrompts,
-  buildMiniList,
-  normalizeRenderGallery,
-} from '../utils/prompts.js';
-import { ensurePaletteOptions } from '../utils/palette.js';
+import { GeminiIECClient, DEFAULT_SAMPLING } from '../utils/gemini-client.js';
+import { resizeImageFile, blobToBase64 } from '../utils/image.js';
 
-const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
-const MAX_FAVORITES = 3;
+const SAMPLING_STORAGE_KEY = 'moodcanvas.sampling';
+const FINAL_PROMPT =
+  'Use the attached base room photo as fixed camera & envelope and the attached selected child image as strict visual target. Produce ONE faithful high-resolution re-render at 1536×1024 (polish only; no new composition). Then return ONE short paragraph of Build Notes (5–7 sentences): materials & finishes, palette accents, lighting layers (day/evening), 1–2 dimensional tips in meters, and any "avoid" reminders. Avoid logos/text.';
 
 export class MoodCanvasApp {
   constructor(root) {
     this.root = root;
-    this.client = new GeminiClient();
+    this.client = new GeminiIECClient();
+    this.keySubscription = null;
     this.state = {
-      loading: false,
-      apiKey: '',
-      project: null,
-      photo: null,
-      analysis: null,
-      gallery: [],
-      favorites: new Set(),
-      abVariants: [],
-      heroRenders: [],
-      quickWins: null,
-      miniList: null,
-      palette: null,
-      paletteOptions: [],
-      selectedPaletteIndex: null,
-      warning: null,
-      error: null,
+      sampling: this.#readSampling(),
+      key: '',
+      main: null,
+      purpose: '',
+      firstNotes: '',
+      refs: [],
+      roomBrief: null,
+      rounds: [],
+      selectedCount: 0,
+      final: { imageUrl: '', notes: '' },
+      candidate: { imageUrl: '', notes: '' },
     };
-    this.unsubscribeKey = null;
-    this.controller = null;
+
+    this.elements = {};
   }
 
   async init() {
-    this.renderShell();
-    await this.bootstrapProject();
-    this.bootstrapKey();
-    this.render();
+    this.#renderShell();
+    this.#bootstrapKey();
+    this.#attachEvents();
+    this.#renderKeyBanner();
+    this.#renderKeyStatus();
+    this.#renderRounds();
   }
 
   destroy() {
-    if (this.unsubscribeKey) {
-      this.unsubscribeKey();
-      this.unsubscribeKey = null;
+    if (this.keySubscription) {
+      this.keySubscription();
+      this.keySubscription = null;
     }
   }
 
-  renderShell() {
+  #renderShell() {
     this.root.innerHTML = `
       <div class="min-h-full flex flex-col">
-        <header class="border-b border-plum-border/40 bg-plum-surface">
-          <div class="mx-auto w-full max-w-5xl px-6 py-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p class="text-peach uppercase tracking-[0.3em] text-xs font-semibold">MoodCanvas</p>
-              <h1 class="text-2xl md:text-3xl font-semibold">Interior Design Assistant</h1>
-              <p class="text-sm text-plum-muted max-w-xl">
-                Upload a single empty-room photo, explore tailored styles, and collect actionable next steps without leaving your browser.
-              </p>
-            </div>
-            <div class="flex items-center gap-3">
-              <span id="keyStatus" class="rounded-full border border-plum-border/40 px-3 py-1 text-xs uppercase tracking-widest text-plum-muted"></span>
-              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry text-white px-4 py-2 text-sm font-medium transition">
-                Settings
-              </button>
+        <header class="sticky top-0 z-30 backdrop-blur bg-bg/70 border-b border-surface2">
+          <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2">
+            <h1 class="text-lg font-semibold">MoodCanvas</h1>
+            <span class="rounded-full bg-surface2 px-3 py-1 text-xs uppercase tracking-wide">IEC Demo</span>
+            <div class="ml-auto flex items-center gap-2">
+              <button id="btn-restart" class="rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90" type="button">Restart</button>
+              <button id="btn-settings" class="rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90" type="button">Settings</button>
             </div>
           </div>
         </header>
-        <main class="flex-1">
-          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="timeline"></div>
+
+        <section id="key-banner" class="hidden max-w-6xl mx-auto mt-3 px-4">
+          <div class="rounded-xl2 border border-surface2 bg-surface p-4 space-y-3">
+            <p class="text-sm">
+              <strong>MoodCanvas</strong> — Get your key from
+              <a class="underline text-accent" href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noopener">Google AI Studio</a>.
+              The key is stored only in your browser.
+            </p>
+            <div class="flex flex-col sm:flex-row gap-2">
+              <input id="key-input" type="password" placeholder="Paste your Gemini API key" class="flex-1 rounded-xl2 bg-surface2 px-3 py-2 outline-none focus:ring-2 focus:ring-accent/60" />
+              <button id="key-save" class="rounded-xl2 bg-cta text-ctaOn px-3 py-2 hover:opacity-90" type="button">Save key</button>
+            </div>
+            <p class="text-xs text-textMuted">Tip: many Google keys start with <code>AIza</code>.</p>
+          </div>
+        </section>
+
+        <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-4 space-y-4">
+          <section class="rounded-xl2 border border-surface2 bg-surface p-4 space-y-4">
+            <div>
+              <h2 class="font-medium">1) Main Target Photo</h2>
+              <input id="main-file" type="file" accept="image/jpeg,image/png" capture="environment" class="mt-2 block w-full text-sm" />
+              <div id="main-preview" class="mt-3"></div>
+            </div>
+            <div class="grid md:grid-cols-2 gap-3">
+              <label class="block text-sm">
+                <span class="text-textMuted">Intended use (optional)</span>
+                <input id="purpose" class="mt-1 w-full rounded-xl2 bg-surface2 px-3 py-2" placeholder="Living Room, Home Office" />
+              </label>
+              <label class="block text-sm">
+                <span class="text-textMuted">Notes for first round (optional)</span>
+                <input id="first-notes" class="mt-1 w-full rounded-xl2 bg-surface2 px-3 py-2" placeholder="warm woods, cozy evening mood" />
+              </label>
+            </div>
+            <div>
+              <h3 class="font-medium">2) Reference images (optional, up to 2; order = weight)</h3>
+              <div class="grid md:grid-cols-2 gap-3 mt-3">
+                <div class="rounded-xl2 border border-surface2 p-3 space-y-2">
+                  <div class="text-sm text-textMuted">Reference #1 (main style)</div>
+                  <input id="ref1" type="file" accept="image/jpeg,image/png" class="block w-full text-sm" />
+                  <div id="ref1-preview"></div>
+                </div>
+                <div class="rounded-xl2 border border-surface2 p-3 space-y-2">
+                  <div class="text-sm text-textMuted">Reference #2 (accent)</div>
+                  <input id="ref2" type="file" accept="image/jpeg,image/png" class="block w-full text-sm" />
+                  <div id="ref2-preview"></div>
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button id="btn-first" class="rounded-xl2 bg-cta text-ctaOn px-4 py-2 hover:opacity-90 disabled:opacity-50" type="button" disabled>Start generating first suggestions</button>
+              <span id="first-hint" class="text-sm text-textMuted">Upload the main photo to enable.</span>
+            </div>
+          </section>
+
+          <section id="room-brief" class="hidden rounded-xl2 border border-surface2 bg-surface p-4 space-y-3">
+            <header class="flex items-center justify-between gap-2">
+              <h2 class="font-medium">Room brief</h2>
+              <span class="text-xs text-textMuted">Auto generated from base photo</span>
+            </header>
+            <p id="room-brief-paragraph" class="text-sm text-text"></p>
+            <ul id="room-brief-bullets" class="list-disc list-inside text-sm text-textMuted space-y-1"></ul>
+          </section>
+
+          <section id="iterations" class="space-y-4"></section>
         </main>
+
+        <div id="generate-bar" class="hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 border-t border-surface2">
+          <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div id="sel-count" class="text-sm text-textMuted">0 selected</div>
+            <input id="round-guidance" class="flex-1 rounded-xl2 bg-surface2 px-3 py-2 text-sm" placeholder="Quick instruction for next round (optional)" />
+            <button id="btn-generate" class="rounded-xl2 bg-cta text-ctaOn px-4 py-2 hover:opacity-90" type="button">Generate Next Iteration</button>
+          </div>
+        </div>
+
+        <div id="settings-backdrop" class="hidden fixed inset-0 z-40 bg-black/60"></div>
+        <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="w-full max-w-md rounded-xl2 bg-surface text-text shadow-dialog border border-surface2 overflow-hidden">
+            <header class="flex items-center justify-between px-4 py-3 border-b border-surface2">
+              <h2 class="text-base font-medium">Settings</h2>
+              <button id="settings-close" class="rounded-xl2 px-2 py-1 hover:opacity-80" type="button">✕</button>
+            </header>
+            <div class="px-4 py-4 space-y-4">
+              <section>
+                <h3 class="text-sm font-medium">Gemini API key</h3>
+                <p id="key-status" class="text-sm text-textMuted mt-1">No key stored.</p>
+                <button id="btn-remove-key" class="mt-2 rounded-xl2 bg-cta text-ctaOn px-3 py-2 hover:opacity-90 disabled:opacity-50" type="button" disabled>Remove key from this device</button>
+              </section>
+              <section class="border-t border-surface2 pt-3">
+                <h3 class="text-sm font-medium">Sampling (global)</h3>
+                <div class="text-xs text-textMuted">temperature <span id="sampling-temp">0.7</span> • topP <span id="sampling-topP">0.9</span> • topK <span id="sampling-topK">32</span></div>
+                <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <label class="flex flex-col gap-1">
+                    <span>temperature</span>
+                    <input id="s-temp" type="range" min="0" max="1" step="0.05" class="w-full" />
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span>topP</span>
+                    <input id="s-topp" type="range" min="0" max="1" step="0.05" class="w-full" />
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span>topK</span>
+                    <input id="s-topk" type="number" min="1" max="128" step="1" class="rounded-xl2 bg-surface2 px-2 py-1" />
+                  </label>
+                </div>
+                <button id="sampling-reset" class="mt-3 rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90" type="button">Reset to defaults</button>
+              </section>
+            </div>
+            <footer class="px-4 py-3 border-t border-surface2 text-right">
+              <button id="settings-done" class="rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90" type="button">Close</button>
+            </footer>
+          </div>
+        </div>
+
+        <div id="final-backdrop" class="hidden fixed inset-0 z-50 bg-black/70"></div>
+        <div id="final-modal" class="hidden fixed inset-0 z-50 p-4 overflow-auto">
+          <div class="max-w-6xl mx-auto bg-surface rounded-xl2 border border-surface2 p-4 space-y-3">
+            <header class="flex items-center justify-between">
+              <h3 class="text-base font-medium">Compare &amp; decide</h3>
+              <button id="final-close" class="rounded-xl2 px-2 py-1 hover:opacity-80" type="button">✕</button>
+            </header>
+            <div class="grid md:grid-cols-2 gap-4">
+              <div>
+                <div class="text-sm text-textMuted mb-1">Current Final</div>
+                <img id="final-current" alt="Current final" class="w-full rounded-xl2" />
+                <p id="final-current-notes" class="text-sm text-textMuted mt-1"></p>
+              </div>
+              <div>
+                <div class="text-sm text-textMuted mb-1">Candidate</div>
+                <img id="final-candidate" alt="Candidate" class="w-full rounded-xl2" />
+                <p id="final-candidate-notes" class="text-sm text-textMuted mt-1"></p>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button id="final-keep" class="rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90" type="button">Keep current</button>
+              <button id="final-replace" class="rounded-xl2 bg-cta text-ctaOn px-3 py-2 hover:opacity-90" type="button">Replace with candidate</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
-        <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
-          <header>
-            <h2 class="text-xl font-semibold">Settings</h2>
-            <p class="text-sm text-plum-muted">Manage your Google Gemini API key for on-device usage.</p>
-          </header>
-          <label class="flex flex-col gap-2 text-sm">
-            <span>Gemini API key</span>
-            <input id="keyInput" name="geminiKey" type="password" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="AIza..." />
-          </label>
-          <div class="flex flex-col gap-3 text-xs text-plum-muted">
-            <p>Bring your own key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="text-peach underline">Google AI Studio</a>. Keys are stored only in this browser.</p>
-            <button type="button" id="clearKeyBtn" class="self-start rounded-full border border-raspberry/50 px-3 py-1 text-raspberry hover:bg-raspberry/10">Remove key from this device</button>
-          </div>
-          <div class="flex justify-end gap-3">
-            <button value="cancel" class="rounded-full px-4 py-2 text-sm bg-plum-surface hover:bg-plum-surface-2 border border-plum-border/60">Cancel</button>
-            <button type="submit" class="rounded-full px-4 py-2 text-sm bg-raspberry text-white hover:bg-raspberry/90">Save</button>
-          </div>
-        </form>
-      </dialog>
     `;
 
-    this.timelineEl = this.root.querySelector('#timeline');
-    this.keyStatusEl = this.root.querySelector('#keyStatus');
-    this.settingsBtn = this.root.querySelector('#settingsBtn');
-    this.settingsModal = this.root.querySelector('#settingsModal');
-    this.keyInput = this.root.querySelector('#keyInput');
-    this.clearKeyBtn = this.root.querySelector('#clearKeyBtn');
+    this.elements = {
+      keyBanner: this.root.querySelector('#key-banner'),
+      keyInput: this.root.querySelector('#key-input'),
+      keySave: this.root.querySelector('#key-save'),
+      keyStatus: this.root.querySelector('#key-status'),
+      btnRemoveKey: this.root.querySelector('#btn-remove-key'),
+      settingsModal: this.root.querySelector('#settings-modal'),
+      settingsBackdrop: this.root.querySelector('#settings-backdrop'),
+      btnSettings: this.root.querySelector('#btn-settings'),
+      btnSettingsClose: this.root.querySelector('#settings-close'),
+      btnSettingsDone: this.root.querySelector('#settings-done'),
+      btnRestart: this.root.querySelector('#btn-restart'),
+      samplingTempValue: this.root.querySelector('#sampling-temp'),
+      samplingTopPValue: this.root.querySelector('#sampling-topP'),
+      samplingTopKValue: this.root.querySelector('#sampling-topK'),
+      samplingTemp: this.root.querySelector('#s-temp'),
+      samplingTopP: this.root.querySelector('#s-topp'),
+      samplingTopK: this.root.querySelector('#s-topk'),
+      samplingReset: this.root.querySelector('#sampling-reset'),
+      mainFile: this.root.querySelector('#main-file'),
+      mainPreview: this.root.querySelector('#main-preview'),
+      refInputs: [this.root.querySelector('#ref1'), this.root.querySelector('#ref2')],
+      refPreviews: [this.root.querySelector('#ref1-preview'), this.root.querySelector('#ref2-preview')],
+      purpose: this.root.querySelector('#purpose'),
+      firstNotes: this.root.querySelector('#first-notes'),
+      btnFirst: this.root.querySelector('#btn-first'),
+      firstHint: this.root.querySelector('#first-hint'),
+      iterations: this.root.querySelector('#iterations'),
+      roomBrief: this.root.querySelector('#room-brief'),
+      roomBriefParagraph: this.root.querySelector('#room-brief-paragraph'),
+      roomBriefBullets: this.root.querySelector('#room-brief-bullets'),
+      generateBar: this.root.querySelector('#generate-bar'),
+      selCount: this.root.querySelector('#sel-count'),
+      roundGuidance: this.root.querySelector('#round-guidance'),
+      btnGenerate: this.root.querySelector('#btn-generate'),
+      finalBackdrop: this.root.querySelector('#final-backdrop'),
+      finalModal: this.root.querySelector('#final-modal'),
+      finalClose: this.root.querySelector('#final-close'),
+      finalKeep: this.root.querySelector('#final-keep'),
+      finalReplace: this.root.querySelector('#final-replace'),
+      finalCurrent: this.root.querySelector('#final-current'),
+      finalCandidate: this.root.querySelector('#final-candidate'),
+      finalCurrentNotes: this.root.querySelector('#final-current-notes'),
+      finalCandidateNotes: this.root.querySelector('#final-candidate-notes'),
+    };
+  }
 
-    this.settingsBtn.addEventListener('click', () => {
-      if (this.settingsModal.open) return;
-      this.keyInput.value = this.state.apiKey;
-      this.settingsModal.showModal();
+  #attachEvents() {
+    const {
+      keySave,
+      keyInput,
+      btnSettings,
+      btnSettingsClose,
+      btnSettingsDone,
+      settingsBackdrop,
+      btnRemoveKey,
+      samplingTemp,
+      samplingTopP,
+      samplingTopK,
+      samplingReset,
+      mainFile,
+      refInputs,
+      purpose,
+      firstNotes,
+      btnFirst,
+      btnGenerate,
+      btnRestart,
+      finalBackdrop,
+      finalClose,
+      finalKeep,
+      finalReplace,
+    } = this.elements;
+
+    keySave.addEventListener('click', () => {
+      const value = keyInput.value.trim();
+      saveGeminiKey(value);
+      keyInput.value = '';
+      this.state.key = value;
+      this.client.setApiKey(this.state.key);
+      this.#renderKeyBanner();
+      this.#renderKeyStatus();
     });
 
-    this.settingsModal.addEventListener('close', () => {
-      this.keyInput.value = this.state.apiKey;
-    });
+    btnSettings.addEventListener('click', () => this.#openSettings());
+    btnSettingsClose.addEventListener('click', () => this.#closeSettings());
+    btnSettingsDone.addEventListener('click', () => this.#closeSettings());
+    settingsBackdrop.addEventListener('click', () => this.#closeSettings());
 
-    this.settingsModal.querySelector('form').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const formData = new FormData(event.currentTarget);
-      const key = formData.get('geminiKey');
-      saveGeminiKey(key ?? '');
-      this.settingsModal.close();
-    });
-
-    this.clearKeyBtn.addEventListener('click', () => {
+    btnRemoveKey.addEventListener('click', () => {
       clearGeminiKey();
-      this.keyInput.value = '';
-    });
-  }
-
-  async bootstrapProject() {
-    const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
-    let project = await getProject(existingId);
-    if (!project) {
-      project = await ensureProject({ name: 'Room Session' });
-      localStorage.setItem(STORAGE_PROJECT_KEY, project.id);
-    }
-    this.state.project = project;
-  }
-
-  bootstrapKey() {
-    const key = readGeminiKey();
-    this.state.apiKey = key;
-    this.client.setApiKey(key);
-    this.unsubscribeKey = onKeyChange(() => {
-      const next = readGeminiKey();
-      this.state.apiKey = next;
-      this.client.setApiKey(next);
-      this.renderKeyStatus();
-      this.render();
-    });
-  }
-
-  render() {
-    this.renderKeyStatus();
-    this.renderTimeline();
-  }
-
-  renderKeyStatus() {
-    if (!this.keyStatusEl) return;
-    if (this.state.apiKey) {
-      this.keyStatusEl.textContent = 'Key stored locally';
-      this.keyStatusEl.classList.remove('bg-raspberry/20', 'text-raspberry');
-    } else {
-      this.keyStatusEl.textContent = 'No API key';
-      this.keyStatusEl.classList.add('bg-raspberry/20', 'text-raspberry');
-    }
-  }
-
-  renderTimeline() {
-    this.timelineEl.innerHTML = '';
-    this.timelineEl.appendChild(this.renderUploadCard());
-    if (!this.state.apiKey) {
-      this.timelineEl.appendChild(this.renderKeyBanner());
-    }
-    if (this.state.photo) {
-      this.timelineEl.appendChild(this.renderPhotoCard());
-      this.timelineEl.appendChild(this.renderAnalysisCard());
-    }
-    if (this.state.analysis) {
-      this.timelineEl.appendChild(this.renderAnalysisResults());
-      if (this.state.palette) {
-        this.timelineEl.appendChild(this.renderGalleryCard());
-      }
-    }
-    if (this.state.abVariants.length > 0) {
-      this.timelineEl.appendChild(this.renderABCard());
-    }
-    if (this.state.heroRenders.length > 0) {
-      this.timelineEl.appendChild(this.renderHeroCard());
-    }
-    if (this.state.quickWins) {
-      this.timelineEl.appendChild(this.renderInsightsCard());
-    }
-  }
-
-  renderUploadCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
-    card.innerHTML = `
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold">1. Upload your room photo</h2>
-          <p class="text-sm text-plum-muted">Use a single JPG or PNG. MoodCanvas stores the image locally and resizes a private thumbnail.</p>
-        </div>
-        ${this.state.photo ? `<button class="text-xs text-peach underline" id="replacePhoto">Replace</button>` : ''}
-      </div>
-      <label class="relative flex h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl2 border border-dashed border-peach/60 bg-plum-surface text-center text-plum-muted transition hover:border-peach hover:text-peach">
-        <input type="file" accept="image/jpeg,image/png" capture="environment" class="absolute inset-0 opacity-0" ${this.state.loading ? 'disabled' : ''} />
-        <span class="text-sm">Tap to upload</span>
-        <span class="text-xs">Long edge ≤ 2048px • Metadata preserved</span>
-      </label>
-    `;
-
-    const input = card.querySelector('input[type="file"]');
-    input.addEventListener('change', (event) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        this.importPhoto(file).catch((error) => this.reportError(error));
-      }
+      this.state.key = '';
+      this.client.setApiKey('');
+      this.#renderKeyBanner();
+      this.#renderKeyStatus();
+      this.#closeSettings();
     });
 
-    const replaceBtn = card.querySelector('#replacePhoto');
-    if (replaceBtn) {
-      replaceBtn.addEventListener('click', () => {
-        this.resetAfter('photo');
+    [samplingTemp, samplingTopP].forEach((input) => {
+      input.addEventListener('input', () => {
+        const updated = {
+          temperature: Number.parseFloat(samplingTemp.value),
+          topP: Number.parseFloat(samplingTopP.value),
+          topK: Number.parseInt(samplingTopK.value, 10) || DEFAULT_SAMPLING.topK,
+        };
+        this.state.sampling = updated;
+        this.#writeSampling();
+        this.#renderSamplingInputs();
       });
-    }
+    });
 
-    return card;
-  }
+    samplingTopK.addEventListener('input', () => {
+      const updated = {
+        temperature: Number.parseFloat(samplingTemp.value),
+        topP: Number.parseFloat(samplingTopP.value),
+        topK: Number.parseInt(samplingTopK.value, 10) || DEFAULT_SAMPLING.topK,
+      };
+      this.state.sampling = updated;
+      this.#writeSampling();
+      this.#renderSamplingInputs();
+    });
 
-  renderKeyBanner() {
-    const banner = document.createElement('section');
-    banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
-    banner.innerHTML = `
-      <div class="font-medium">Bring your own Google Gemini key</div>
-  <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
-      <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
-    `;
-    banner.querySelector('#openSettings').addEventListener('click', () => this.settingsModal.showModal());
-    return banner;
-  }
+    samplingReset.addEventListener('click', () => {
+      this.state.sampling = { ...DEFAULT_SAMPLING };
+      this.#writeSampling();
+      this.#renderSamplingInputs();
+    });
 
-  renderPhotoCard() {
-    const { photo } = this.state;
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">2. Confirm scope & intended function</h2>
-      <div class="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <div class="rounded-xl2 overflow-hidden border border-plum-border/40">
-          <img src="${photo.thumbUrl}" alt="Uploaded room" class="block w-full h-full object-cover" loading="lazy" />
-        </div>
-        <form class="flex flex-col gap-3" id="scopeForm">
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intended use</span>
-            <select name="function" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70">
-              ${SUPPORTED_ROOM_FUNCTIONS.map((fn) => `<option value="${fn}">${fn}</option>`).join('')}
-            </select>
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intervention scope (1–4)</span>
-            <input name="scope" type="number" min="1" max="4" value="2" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Notes for the designer</span>
-            <textarea name="notes" rows="3" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="Optional context"></textarea>
-          </label>
-          <button class="mt-2 self-start rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach" type="submit" ${this.state.loading ? 'disabled' : ''}>Run analysis</button>
-          ${this.state.warning ? `<p class="text-xs text-peach/80">${this.state.warning}</p>` : ''}
-        </form>
-      </div>
-    `;
+    mainFile.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        this.state.main = await resizeImageFile(file, 2048, 0.9);
+        this.elements.mainPreview.innerHTML = `<img src="${this.state.main.url}" alt="Main photo" class="max-h-64 rounded-xl2" />`;
+        this.elements.btnFirst.disabled = false;
+        this.elements.firstHint.textContent = 'Ready.';
+      } catch (error) {
+        console.error(error);
+        this.state.main = null;
+        this.elements.mainPreview.textContent = 'Unable to load image.';
+      }
+    });
 
-    const form = card.querySelector('#scopeForm');
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
+    refInputs.forEach((input, index) => {
+      input.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+          this.state.refs[index] = undefined;
+          this.elements.refPreviews[index].innerHTML = '';
+          this.state.refs = this.state.refs.filter(Boolean);
+          return;
+        }
+        try {
+          const resized = await resizeImageFile(file, 2048, 0.9);
+          this.state.refs[index] = resized;
+          this.elements.refPreviews[index].innerHTML = `<img src="${resized.url}" alt="Reference ${index + 1}" class="max-h-32 rounded-xl2" />`;
+          this.state.refs = this.state.refs.filter(Boolean);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    });
+
+    purpose.addEventListener('input', () => {
+      this.state.purpose = purpose.value;
+    });
+
+    firstNotes.addEventListener('input', () => {
+      this.state.firstNotes = firstNotes.value;
+    });
+
+    btnFirst.addEventListener('click', async () => {
+      if (!this.state.main) {
+        window.alert('Please upload the main photo first.');
         return;
       }
-      const data = new FormData(form);
-      this.runAnalysis({
-        intendedUse: data.get('function'),
-        scope: Number.parseInt(data.get('scope'), 10) || 1,
-        notes: data.get('notes')?.toString() ?? '',
-      }).catch((error) => this.reportError(error));
+      btnFirst.textContent = 'Restart';
+      this.state.rounds = [];
+      this.state.final = { imageUrl: '', notes: '' };
+      this.#renderRounds();
+      try {
+        const brief = await this.#generateRoomBrief();
+        this.state.roomBrief = brief;
+        this.#renderRoomBrief();
+      } catch (error) {
+        window.alert(`Room brief failed: ${error.message || error}`);
+        return;
+      }
+      await this.#runRound();
     });
 
-    return card;
-  }
+    btnGenerate.addEventListener('click', async () => {
+      if (this.state.selectedCount <= 0) return;
+      await this.#runRound();
+      this.elements.roundGuidance.value = '';
+    });
 
-  renderAnalysisCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">3. Analysis progress</h2>
-      <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
-      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (120s timeout)</div>' : ''}
-      ${this.state.error && !this.state.analysis ? `<p class="text-sm text-raspberry">${this.state.error}</p>` : ''}
-    `;
-    return card;
-  }
-
-  renderAnalysisResults() {
-    const { analysis } = this.state;
-    const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
-
-    const paletteStatus = this.state.palette
-      ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
-      : '<span class="rounded-full bg-plum-border/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Awaiting pick</span>';
-
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">4. Room intelligence</h2>
-        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette exploration, and quick wins.</p>
-      </div>
-      <div class="grid gap-6 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">Inspiration pulse</h3>
-          <div class="flex flex-wrap gap-2">
-            ${analysis.usage_candidates.slice(0, 3).map((item) => `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`).join('')}
-          </div>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
-              <p class="text-xs text-plum-muted mt-1">Pick one of the suggested palettes to continue.</p>
-            </div>
-            ${paletteStatus}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2" id="paletteGrid"></div>
-          ${!this.state.palette ? '<p class="text-xs text-peach/80">Select a palette to unlock the 10-style gallery.</p>' : ''}
-        </section>
-      </div>
-      <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-        <ol class="space-y-3 text-sm text-plum-muted">
-          ${(this.state.analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
-        </ol>
-      </section>
-    `;
-
-    const paletteGrid = card.querySelector('#paletteGrid');
-    if (paletteGrid) {
-      if (paletteOptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-plum-muted';
-        empty.textContent = 'No palette suggestions available. You can still proceed once a palette is selected later.';
-        paletteGrid.appendChild(empty);
-      } else {
-        paletteOptions.forEach((option, index) => {
-          paletteGrid.appendChild(this.renderPaletteOption(option, index));
-        });
+    btnRestart.addEventListener('click', () => {
+      if (
+        !window.confirm(
+          'Restart will clear all generated images and selections. Keep base photo, purpose, references, room brief and settings?'
+        )
+      ) {
+        return;
       }
+      this.state.rounds = [];
+      this.state.final = { imageUrl: '', notes: '' };
+      this.#renderRounds();
+      this.#updateSelectedCount();
+    });
+
+    finalBackdrop.addEventListener('click', () => this.#closeFinalModal());
+    finalClose.addEventListener('click', () => this.#closeFinalModal());
+    finalKeep.addEventListener('click', () => this.#closeFinalModal());
+    finalReplace.addEventListener('click', () => {
+      this.state.final = { ...this.state.candidate };
+      this.#closeFinalModal();
+      window.alert('Final replaced.');
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') this.#closeFinalModal();
+    });
+  }
+
+  #bootstrapKey() {
+    this.state.key = readGeminiKey();
+    this.client.setApiKey(this.state.key);
+    this.keySubscription = onKeyChange(() => {
+      const next = readGeminiKey();
+      this.state.key = next;
+      this.client.setApiKey(next);
+      this.#renderKeyBanner();
+      this.#renderKeyStatus();
+    });
+  }
+
+  #readSampling() {
+    try {
+      const raw = localStorage.getItem(SAMPLING_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_SAMPLING };
+      const parsed = JSON.parse(raw);
+      return {
+        temperature: Number.parseFloat(parsed.temperature) || DEFAULT_SAMPLING.temperature,
+        topP: Number.parseFloat(parsed.topP) || DEFAULT_SAMPLING.topP,
+        topK: Number.parseInt(parsed.topK, 10) || DEFAULT_SAMPLING.topK,
+      };
+    } catch (error) {
+      console.warn('Unable to read sampling configuration', error);
+      return { ...DEFAULT_SAMPLING };
     }
-
-    return card;
   }
 
-  renderPaletteSwatch(label, info = {}) {
-    const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
-    const name = typeof info.name === 'string' && info.name.trim().length > 0 ? info.name : '—';
-    const finish = typeof info.finish === 'string' ? info.finish : '';
-    return `
-      <div class="flex flex-col gap-2 text-xs text-center">
-        <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
-          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
-            <rect width="100" height="100" fill="${hex}" />
-          </svg>
-        </div>
-        <div class="flex flex-col">
-          <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
-          <span>${name}</span>
-          <span>${hex}</span>
-          ${finish ? `<span>${finish}</span>` : ''}
-        </div>
-      </div>
-    `;
+  #writeSampling() {
+    try {
+      localStorage.setItem(SAMPLING_STORAGE_KEY, JSON.stringify(this.state.sampling));
+    } catch (error) {
+      console.warn('Unable to persist sampling configuration', error);
+    }
   }
 
-  renderPaletteOption(palette, index) {
-    const isSelected = this.state.selectedPaletteIndex === index;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
-      isSelected ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20' : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
-    }`;
+  #renderSamplingInputs() {
+    const { sampling } = this.state;
+    const {
+      samplingTemp,
+      samplingTopP,
+      samplingTopK,
+      samplingTempValue,
+      samplingTopPValue,
+      samplingTopKValue,
+    } = this.elements;
 
-    const statusBadge = isSelected
-      ? '<span class="rounded-full bg-peach/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/90">Selected</span>'
-      : index === 0
-        ? '<span class="rounded-full bg-plum-border/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Recommended</span>'
-        : '';
-
-    button.innerHTML = `
-      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-plum-muted">
-        <span>Palette ${index + 1}</span>
-        ${statusBadge}
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, palette?.[key] ?? {})).join('')}
-      </div>
-    `;
-
-    button.addEventListener('click', () => this.selectPalette(index));
-    return button;
+    samplingTemp.value = sampling.temperature;
+    samplingTopP.value = sampling.topP;
+    samplingTopK.value = sampling.topK;
+    samplingTempValue.textContent = sampling.temperature.toFixed(2);
+    samplingTopPValue.textContent = sampling.topP.toFixed(2);
+    samplingTopKValue.textContent = String(sampling.topK);
   }
 
-  selectPalette(index) {
-    const options = this.state.paletteOptions ?? [];
-    const palette = options[index];
-    if (!palette) {
+  #renderKeyBanner() {
+    const hasKey = Boolean(this.state.key);
+    this.elements.keyBanner.classList.toggle('hidden', hasKey);
+  }
+
+  #renderKeyStatus() {
+    const hasKey = Boolean(this.state.key);
+    this.elements.keyStatus.textContent = hasKey
+      ? 'Key present on this device.'
+      : 'No key stored.';
+    this.elements.btnRemoveKey.disabled = !hasKey;
+  }
+
+  async #generateRoomBrief() {
+    const prompt = this.#buildRoomBriefPrompt();
+    const { paragraph, bullets } = await this.client.generateRoomBrief({
+      promptText: prompt,
+      base64Main: this.state.main.base64,
+      mimeMain: this.state.main.mime,
+      sampling: this.state.sampling,
+    });
+    return { paragraph, bullets };
+  }
+
+  #buildRoomBriefPrompt() {
+    const purpose = this.state.purpose?.trim() || 'None';
+    const notes = this.state.firstNotes?.trim() || 'None';
+    return [
+      'ROLE: Create a concise, practical “room brief” for interior styling iterations.',
+      '',
+      'INPUTS:',
+      '- Base room photo (camera pose and architectural envelope must be preserved)',
+      `- Intended use: ${purpose}`,
+      `- Notes from user (optional): ${notes}`,
+      '',
+      'OUTPUT FORMAT (plain text only, no headings, no markdown):',
+      '1) One paragraph (~60–90 words) summarizing the room’s light, openings, proportions and key opportunities/risks, with the intended use as priority.',
+      '2) Then 3–5 bullets (one line each) of strict constraints/guidelines.',
+      '',
+      'CONSTRAINT HINTS (pick only what’s relevant; do not list all):',
+      '• Keep camera pose & envelope; no structural changes unless explicitly asked later.',
+      '• 60–30–10 color planning (dominant–secondary–accent).',
+      '• Circulation clearance ~0.9 m in main paths; avoid cluttered layouts.',
+      '• Sofa–table reach ≈0.35–0.45 m OR desk depth ≥0.60 m depending on use.',
+      '• Rug sizing: front legs of seating on rug; workspace rug fully under chair.',
+      '• Curtains: rod 10–15 cm above head; total width ≈2× opening.',
+      '• Layered lighting: ambient + task + accent; evening ~2700–3000 K.',
+      '• If scale is uncertain, keep dimensions conservative and mention low confidence.',
+      'Avoid logos/text and unrealistic geometry.',
+    ].join('\n');
+  }
+
+  #renderRoomBrief() {
+    if (!this.state.roomBrief) {
+      this.elements.roomBrief.classList.add('hidden');
       return;
     }
-    this.state.selectedPaletteIndex = index;
-    this.state.palette = palette;
-    if (this.state.analysis) {
-      const updatedAnalysis = {
-        ...this.state.analysis,
-        palette_60_30_10: palette,
-      };
-      updatedAnalysis.render_gallery = normalizeRenderGallery(updatedAnalysis, palette);
-      this.state.analysis = updatedAnalysis;
-    }
-    this.render();
+    const { paragraph, bullets } = this.state.roomBrief;
+    this.elements.roomBriefParagraph.textContent = paragraph;
+    this.elements.roomBriefBullets.innerHTML = bullets
+      .map((bullet) => `<li>${bullet}</li>`)
+      .join('');
+    this.elements.roomBrief.classList.remove('hidden');
   }
 
-  renderGalleryCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const gallery = this.state.gallery;
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">5. 10-style gallery</h2>
-        <p class="text-sm text-plum-muted">Generate renders in parallel (pool=5). Tap to mark favorites for A/B exploration.</p>
-      </div>
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" id="galleryGrid"></div>
-      <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <button id="generateGallery" class="rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''}>Generate renders</button>
-        <div class="text-xs text-plum-muted">Favorites: ${this.state.favorites.size}/${MAX_FAVORITES}</div>
-      </div>
-    `;
+  #diversityDeck() {
+    return [
+      'slightly warmer palette; gentler contrast',
+      'slightly cooler palette; crisper contrast',
+      'increase textile presence; softer layering',
+      'reduce textiles; cleaner lines, fewer throws',
+      'airier layout with more negative space',
+      'denser, cozier seating cluster',
+      'wood-forward materials; minimize metal',
+      'metal accents slightly emphasized; reduce wood',
+      'soft evening lighting (~2700–3000K), cozy ambience',
+      'neutral daytime lighting (~4000–4500K), clear ambience',
+      'tone-on-tone, low-contrast composition',
+      'bolder accents; stronger figure-ground definition',
+    ];
+  }
 
-    const grid = card.querySelector('#galleryGrid');
-    const prompts = this.state.analysis.render_gallery;
-    const combined = prompts.map((prompt) => ({ prompt, render: gallery.find((item) => item.style === prompt.style) ?? null }));
-    combined
-      .sort((a, b) => this.findStyleScore(b.prompt.style) - this.findStyleScore(a.prompt.style))
-      .forEach(({ prompt, render }) => {
-        const tile = document.createElement('button');
-        tile.type = 'button';
-        tile.className = `group relative flex flex-col overflow-hidden rounded-xl2 border ${this.state.favorites.has(prompt.style) ? 'border-peach/80' : 'border-plum-border/30'} bg-plum-surface text-left transition`;
-        tile.dataset.style = prompt.style;
-        tile.innerHTML = `
-          <div class="relative aspect-[3/2] w-full overflow-hidden bg-plum-surface-2 flex items-center justify-center text-xs text-plum-muted">
-            ${render ? `<img src="${render.thumbUrl}" alt="${prompt.style} render" class="h-full w-full object-cover" loading="lazy" />` : 'Pending'}
-            <span class="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wide">${prompt.style}</span>
-          </div>
-          <div class="flex flex-col gap-1 p-3 text-xs">
-            <p class="text-plum-text font-medium">${prompt.focus}</p>
-            <p class="line-clamp-3 text-plum-muted">${prompt.guidance}</p>
-          </div>
-        `;
-        tile.addEventListener('click', () => this.toggleFavorite(prompt.style));
-        grid.appendChild(tile);
+  #favoritesBlock() {
+    const collected = [];
+    this.state.rounds.forEach((round) => {
+      round.tiles.forEach((tile) => {
+        if (tile.fav) {
+          const note = tile.note?.trim() ? ` [note: ${tile.note.trim()}]` : '';
+          collected.push(`(${collected.length + 1}) ${tile.text || '(no descriptor)'}${note}`);
+        }
       });
-
-    card.querySelector('#generateGallery').addEventListener('click', () => {
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      this.generateGalleryRenders().catch((error) => this.reportError(error));
     });
-
-    if (this.state.favorites.size > 0) {
-      const confirm = document.createElement('div');
-      confirm.className = 'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
-      confirm.innerHTML = `
-        <div>Generate A/B mini-variants for ${this.state.favorites.size} favorite styles.</div>
-        <button class="rounded-full bg-coral/90 px-4 py-2 text-plum font-medium hover:bg-coral" ${this.state.loading ? 'disabled' : ''}>Launch A/B (${this.state.favorites.size * 2} images)</button>
-      `;
-      confirm.querySelector('button').addEventListener('click', () => this.generateABVariants());
-      card.appendChild(confirm);
-    }
-
-    return card;
+    return collected.join(' ');
   }
 
-  renderABCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">6. A/B mini-variants</h2>
-        <p class="text-sm text-plum-muted">Smart Mixed axes provide controlled variation for each favorite style.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-3" id="abGrid"></div>
-      <button class="self-end rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''} id="generateHeroes">Generate 3 hero renders</button>
-    `;
-
-    const grid = card.querySelector('#abGrid');
-    this.state.abVariants.forEach((variant) => {
-      const tile = document.createElement('article');
-      tile.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
-      tile.innerHTML = `
-        <div class="relative aspect-[3/2] bg-plum-surface-2">
-          ${variant.thumbUrl ? `<img src="${variant.thumbUrl}" alt="${variant.style} variant" class="h-full w-full object-cover" loading="lazy" />` : '<div class="flex h-full items-center justify-center text-xs text-plum-muted">Pending</div>'}
-        </div>
-        <div class="p-4 text-xs">
-          <div class="font-semibold text-plum-text">${variant.style} · ${variant.variant}</div>
-          <div class="text-plum-muted">${variant.focus}</div>
-        </div>
-      `;
-      grid.appendChild(tile);
-    });
-
-    card.querySelector('#generateHeroes').addEventListener('click', () => this.generateHeroRenders());
-    return card;
+  #buildIterationPrompt(hint, roundGuidance) {
+    return [
+      'Use the attached base room photo as fixed camera pose and architectural envelope.',
+      'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood)—not geometry.',
+      'Consider the following guidance:',
+      `• Room brief (silent): ${this.state.roomBrief ? [this.state.roomBrief.paragraph, ...(this.state.roomBrief.bullets || [])].join(' ') : 'None'}`,
+      `• Intended use: ${this.state.purpose?.trim() || 'None'}`,
+      `• User’s global guidance for this round: ${roundGuidance?.trim() || 'None'}`,
+      `• Selected favorites (as free-text, raw): ${this.#favoritesBlock() || 'None'}`,
+      '',
+      `Diversity hint for this image: ${hint || 'None'}`,
+      '',
+      'Generate ONE updated interior variant at 1024×682. Preserve perspective and room envelope.',
+      'Return ONE image and ONE short free-text paragraph (single paragraph) describing the mood, the key changes vs the base, and 2–3 ideas for the next iteration. Avoid logos/text.',
+    ].join('\n');
   }
 
-  renderHeroCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">7. Hero renders</h2>
-        <p class="text-sm text-plum-muted">Three flagship Smart Mixed renders at 1536×1024. Tap to open full size in a new tab.</p>
-      </div>
-      <div class="grid gap-4 lg:grid-cols-3" id="heroGrid"></div>
-    `;
-
-    const grid = card.querySelector('#heroGrid');
-    this.state.heroRenders.forEach((render) => {
-      const tile = document.createElement('a');
-      tile.href = render.fullUrl;
-      tile.target = '_blank';
-      tile.rel = 'noopener';
-      tile.className = 'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
-      tile.innerHTML = `
-        <img src="${render.thumbUrl}" alt="Hero render" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy" />
-        <span class="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wide">${render.variant}</span>
-      `;
-      grid.appendChild(tile);
-    });
-
-    return card;
-  }
-
-  renderInsightsCard() {
-  const card = document.createElement('section');
-  card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-  const quickWins = Array.isArray(this.state.quickWins) ? this.state.quickWins : [];
-  const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
-        <p class="text-sm text-plum-muted">Actionable instructions with neutral specifications only.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${quickWins.map((item) => `<li><span class="text-plum-text font-medium">${item.title}</span> — ${item.description}</li>`).join('')}
-          </ol>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${list.length > 0
-              ? list
-                  .map(
-                    (item) =>
-                      `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
-                  )
-                  .join('')
-              : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'}
-          </ol>
-        </section>
-      </div>
-    `;
-    return card;
-  }
-
-  async importPhoto(file) {
-    this.state.loading = true;
-    this.render();
-    const normalized = await normalizeImageFile(file);
-    const base64 = await blobToBase64(normalized.original);
-    const thumbUrl = URL.createObjectURL(normalized.thumb);
-    const fullUrl = URL.createObjectURL(normalized.original);
-    const projectId = this.state.project.id;
-
-    const originalRecord = await saveMedia(projectId, {
-      kind: 'input',
-      blob: normalized.original,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.original.size,
-    });
-
-    await saveMedia(projectId, {
-      kind: 'thumb',
-      relatedId: originalRecord.id,
-      blob: normalized.thumb,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.thumb.size,
-    });
-
-    await appendEvent(projectId, {
-      type: 'upload_image',
-      payload: { mediaId: originalRecord.id, name: file.name },
-    });
-
-    this.state.photo = {
-      base64,
-      thumbUrl,
-      fullUrl,
-      width: normalized.width,
-      height: normalized.height,
-      fileName: file.name,
+  async #runRound() {
+    const roundIndex = this.state.rounds.length + 1;
+    const round = {
+      index: roundIndex,
+      tiles: Array.from({ length: 12 }, () => ({ ok: false })),
+      open: true,
     };
-    this.resetAfter('analysis');
-    this.state.loading = false;
-    this.render();
-  }
+    this.state.rounds.push(round);
+    this.#renderRounds();
 
-  resetAfter(step) {
-    if (step === 'photo') {
-      this.state.photo = null;
+    this.#clearFavorites();
+
+    const deck = this.#diversityDeck();
+    let nextIndex = 0;
+    const running = new Set();
+
+    const startOne = async (index) => {
+      const hint = deck[index];
+      const prompt = this.#buildIterationPrompt(hint, this.elements.roundGuidance.value);
+      const task = this.client
+        .generateVariant({
+          promptText: prompt,
+          base64Main: this.state.main.base64,
+          mimeMain: this.state.main.mime,
+          references: this.state.refs,
+          sampling: this.state.sampling,
+        })
+        .then((result) => {
+          round.tiles[index] = { ...result, ok: true, fav: false, note: '' };
+        })
+        .catch((error) => {
+          round.tiles[index] = { ok: false, error: error.message || String(error) };
+        })
+        .finally(() => {
+          running.delete(task);
+          this.#renderRounds();
+        });
+      running.add(task);
+    };
+
+    const pool = Math.min(6, deck.length);
+    for (let i = 0; i < pool; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await startOne(nextIndex);
+      nextIndex += 1;
     }
-    this.state.analysis = null;
-    this.state.gallery = [];
-    this.state.favorites = new Set();
-    this.state.abVariants = [];
-    this.state.heroRenders = [];
-    this.state.quickWins = null;
-    this.state.miniList = null;
-    this.state.palette = null;
-    this.state.paletteOptions = [];
-    this.state.selectedPaletteIndex = null;
-    this.render();
+
+    while (nextIndex < deck.length) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.race([...running]);
+      // eslint-disable-next-line no-await-in-loop
+      await startOne(nextIndex);
+      nextIndex += 1;
+    }
+
+    await Promise.allSettled([...running]);
+    this.#renderRounds();
   }
 
-  async runAnalysis({ intendedUse, scope, notes }) {
-    this.state.loading = true;
-    this.state.error = null;
-    this.render();
+  async #retryTile(round, tileIndex) {
+    round.tiles[tileIndex] = { ok: false };
+    this.#renderRounds();
     try {
-      const prompt = buildAnalysisPrompt({ intendedUse, scope, notes });
-      const controller = new AbortController();
-      this.controller = controller;
-      const data = await this.client.analyzeRoom({
-        imageBase64: this.state.photo.base64,
-        prompt,
-        signal: controller.signal,
+      const hint = this.#diversityDeck()[tileIndex];
+      const prompt = this.#buildIterationPrompt(hint, this.elements.roundGuidance.value);
+      const result = await this.client.generateVariant({
+        promptText: prompt,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        references: this.state.refs,
+        sampling: this.state.sampling,
       });
-      const normalizedAnalysis = { ...data };
-  const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
-      const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
-      if (defaultPalette) {
-        normalizedAnalysis.palette_60_30_10 = defaultPalette;
-      }
-      normalizedAnalysis.palette_options = paletteOptions;
-      normalizedAnalysis.render_gallery = normalizeRenderGallery(normalizedAnalysis, defaultPalette);
-      await saveArtifact(this.state.project.id, {
-        kind: 'analysis',
-        json: normalizedAnalysis,
-      });
-      await appendEvent(this.state.project.id, {
-        type: 'analysis_done',
-        payload: { intendedUse, scope },
-      });
-      this.state.analysis = normalizedAnalysis;
-      this.state.quickWins = normalizedAnalysis.quick_wins;
-      this.state.paletteOptions = paletteOptions;
-      this.state.palette = null;
-      this.state.selectedPaletteIndex = null;
-      this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
+      round.tiles[tileIndex] = { ...result, ok: true, fav: false, note: '' };
     } catch (error) {
-      if (error.code === 'missing-key') {
-        this.settingsModal.showModal();
-      }
-      this.reportError(error);
-    } finally {
-      this.state.loading = false;
-      this.render();
+      round.tiles[tileIndex] = { ok: false, error: error.message || String(error) };
     }
+    this.#renderRounds();
   }
 
-  async generateGalleryRenders() {
-    this.state.loading = true;
-    this.render();
-    const analysis = this.state.analysis;
-    const poolSize = 5;
-    const tasks = analysis.render_gallery.map((item) => async () => {
-      const assets = await this.renderAndStore({
-        prompt: item.prompt,
-        relatedId: item.style,
+  #clearFavorites() {
+    this.state.rounds.forEach((existing) => {
+      existing.tiles.forEach((tile) => {
+        tile.fav = false;
+        tile.note = tile.note || '';
       });
-      const entry = {
-        style: item.style,
-        prompt: item.prompt,
-        focus: item.focus,
-        thumbUrl: assets.thumbUrl,
-        fullUrl: assets.fullUrl,
-      };
-      return entry;
     });
-
-    const results = [];
-    const queue = tasks.slice();
-    const workers = Array.from({ length: poolSize }, async () => {
-      while (queue.length > 0) {
-        const job = queue.shift();
-        try {
-          const result = await job();
-          results.push(result);
-          this.state.gallery = [...results];
-          this.render();
-        } catch (error) {
-          console.error('Render failed', error);
-        }
-      }
-    });
-
-    await Promise.all(workers);
-    await appendEvent(this.state.project.id, {
-      type: 'gallery_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
+    this.#updateSelectedCount();
   }
 
-  async generateABVariants() {
-    if (this.state.favorites.size === 0) return;
-    this.state.loading = true;
-    this.render();
-    const variants = [];
-    const axes = this.state.analysis.smart_mixed_axes;
-    for (const style of this.state.favorites) {
-      const basePrompt = this.state.analysis.render_gallery.find((item) => item.style === style);
-      if (!basePrompt) continue;
-      const prompts = buildABPrompts(basePrompt.prompt, axes);
-      for (let index = 0; index < prompts.length; index += 1) {
-        try {
-          const assets = await this.renderAndStore({
-            prompt: prompts[index],
-            relatedId: `${style}-${index}`,
+  #renderRounds() {
+    const container = this.elements.iterations;
+    container.innerHTML = '';
+
+    // auto-collapse older rounds (keep last two open)
+    this.state.rounds.forEach((round, index) => {
+      round.open = index >= this.state.rounds.length - 2;
+    });
+
+    this.state.rounds.forEach((round) => {
+      const section = document.createElement('section');
+      section.className = 'rounded-xl2 border border-surface2 bg-surface p-3 space-y-3';
+
+      const header = document.createElement('div');
+      header.className = 'flex items-center justify-between';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'rounded-xl2 bg-surface2 px-3 py-2 hover:opacity-90 text-sm';
+      toggle.textContent = round.open ? 'Collapse' : 'Expand';
+      toggle.addEventListener('click', () => {
+        round.open = !round.open;
+        this.#renderRounds();
+      });
+
+      const title = document.createElement('div');
+      title.className = 'font-medium';
+      title.textContent = `Iteration #${round.index} (${round.tiles.length} images)`;
+      header.append(title, toggle);
+      section.append(header);
+
+      const grid = document.createElement('div');
+      grid.className = round.open ? 'grid gap-3 sm:grid-cols-2 lg:grid-cols-3' : 'hidden';
+
+      round.tiles.forEach((tile, tileIndex) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-xl2 border border-surface2 bg-surface2 p-2 space-y-2';
+        if (tile.ok) {
+          const image = document.createElement('img');
+          image.src = tile.imageUrl;
+          image.alt = 'Generated variant';
+          image.className = 'w-full rounded-xl2 cursor-pointer';
+          image.loading = 'lazy';
+          image.addEventListener('click', () => {
+            window.open(tile.imageUrl, '_blank');
           });
-          variants.push({
-            style,
-            variant: index === 0 ? axes.axisA.label : axes.axisB.label,
-            focus: index === 0 ? axes.axisA.description : axes.axisB.description,
-            thumbUrl: assets.thumbUrl,
-            fullUrl: assets.fullUrl,
+
+          const controls = document.createElement('div');
+          controls.className = 'flex items-center justify-between gap-2';
+          const favButton = document.createElement('button');
+          favButton.type = 'button';
+          favButton.className = 'rounded-xl2 bg-surface px-2 py-1 text-sm hover:opacity-90';
+          favButton.textContent = tile.fav ? '★ Favorited' : '☆ Favorite';
+          favButton.addEventListener('click', () => {
+            tile.fav = !tile.fav;
+            this.#renderRounds();
+            this.#updateSelectedCount();
           });
-        } catch (error) {
-          console.error('Variant render failed', error);
+
+          const finalButton = document.createElement('button');
+          finalButton.type = 'button';
+          finalButton.className = 'rounded-xl2 bg-surface px-2 py-1 text-sm hover:opacity-90';
+          finalButton.textContent = 'Use as final';
+          finalButton.addEventListener('click', () => {
+            this.#startFinalCompare(tile.imageUrl);
+          });
+
+          controls.append(favButton, finalButton);
+
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.textContent = 'Details anzeigen';
+          const descriptor = document.createElement('p');
+          descriptor.className = 'text-sm text-textMuted mt-1 whitespace-pre-wrap';
+          descriptor.textContent = tile.text || '(no descriptor)';
+          details.append(summary, descriptor);
+
+          const note = document.createElement('input');
+          note.type = 'text';
+          note.placeholder = 'Optional note for next round (this favorite)';
+          note.value = tile.note || '';
+          note.className = `${tile.fav ? '' : 'hidden '}rounded-xl2 bg-surface px-2 py-1 text-sm`;
+          note.addEventListener('input', () => {
+            tile.note = note.value;
+          });
+
+          card.append(image, controls, details, note);
+        } else if (tile.error) {
+          const message = document.createElement('p');
+          message.className = 'text-sm text-textMuted';
+          message.textContent = `Generation failed: ${tile.error}`;
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'rounded-xl2 bg-surface px-3 py-2 text-sm hover:opacity-90';
+          retry.textContent = 'Retry';
+          retry.addEventListener('click', () => {
+            this.#retryTile(round, tileIndex);
+          });
+          card.append(message, retry);
+        } else {
+          const placeholder = document.createElement('div');
+          placeholder.className = 'animate-pulse h-28 rounded-xl2 bg-surface';
+          card.append(placeholder);
         }
-      }
-    }
-    this.state.abVariants = variants;
-    await appendEvent(this.state.project.id, {
-      type: 'ab_generated',
-      payload: { count: variants.length },
+        grid.append(card);
+      });
+
+      section.append(grid);
+      container.append(section);
     });
-    this.state.loading = false;
-    this.render();
+
+    this.#updateSelectedCount();
   }
 
-  async generateHeroRenders() {
-    this.state.loading = true;
-    this.render();
-    const axes = this.state.analysis.smart_mixed_axes;
-    const basePrompt = this.state.analysis.render_gallery[0].prompt;
-    const prompts = buildHeroPrompts(basePrompt, axes);
-    const results = [];
-    for (let index = 0; index < prompts.length; index += 1) {
-      try {
-        const assets = await this.renderAndStore({
-          prompt: prompts[index],
-          relatedId: `hero-${index}`,
-        });
-        results.push({
-          variant: index === 0 ? 'Axis A' : index === 1 ? 'Axis B' : 'Blend',
-          thumbUrl: assets.thumbUrl,
-          fullUrl: assets.fullUrl,
-        });
-      } catch (error) {
-        console.error('Hero render failed', error);
-      }
-    }
-    this.state.heroRenders = results;
-    this.state.quickWins = this.state.analysis.quick_wins;
-    this.state.miniList = buildMiniList(this.state.analysis);
-    await appendEvent(this.state.project.id, {
-      type: 'hero_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  toggleFavorite(style) {
-    if (this.state.favorites.has(style)) {
-      this.state.favorites.delete(style);
-    } else {
-      if (this.state.favorites.size >= MAX_FAVORITES) {
-        return;
-      }
-      this.state.favorites.add(style);
-    }
-    this.render();
-  }
-
-  async persistRenderAssets({ blob, thumb, relatedId }) {
-    const renderRecord = await saveMedia(this.state.project.id, {
-      kind: 'render',
-      relatedId,
-      blob,
-      mime: blob.type,
-      bytes: blob.size,
-    });
-    await saveMedia(this.state.project.id, {
-      kind: 'thumb',
-      relatedId: renderRecord.id,
-      blob: thumb,
-      mime: 'image/jpeg',
-      bytes: thumb.size,
-    });
-    return renderRecord;
-  }
-
-  async renderAndStore({ prompt, relatedId }) {
-    const [result] = await this.client.generateRenders({
-      prompt,
-      imageBase64: this.state.photo.base64,
-    });
-    const blob = base64ToBlob(result.data, result.mimeType);
-    const thumb = await createThumb(blob);
-    await this.persistRenderAssets({ blob, thumb, relatedId });
-    return {
-      fullUrl: URL.createObjectURL(blob),
-      thumbUrl: URL.createObjectURL(thumb),
-    };
-  }
-
-  findStyleScore(style) {
-    return (
-      this.state.analysis?.styles_top10.find((item) => item.style === style)?.score ?? 0
+  #updateSelectedCount() {
+    const count = this.state.rounds.reduce(
+      (total, round) => total + round.tiles.filter((tile) => tile.fav).length,
+      0
     );
+    this.state.selectedCount = count;
+    this.elements.selCount.textContent = `${count} selected`;
+    this.elements.generateBar.classList.toggle('hidden', count === 0);
   }
 
-  reportError(error) {
-    console.error(error);
-    this.state.error = error.message ?? 'Unexpected error';
-    this.state.loading = false;
-    this.render();
+  #openSettings() {
+    this.#renderSamplingInputs();
+    this.#renderKeyStatus();
+    this.elements.settingsModal.classList.remove('hidden');
+    this.elements.settingsBackdrop.classList.remove('hidden');
+  }
+
+  #closeSettings() {
+    this.elements.settingsModal.classList.add('hidden');
+    this.elements.settingsBackdrop.classList.add('hidden');
+  }
+
+  async #startFinalCompare(imageUrl) {
+    try {
+      const candidateBlob = await (await fetch(imageUrl)).blob();
+      const blobBase64 = await blobToBase64(candidateBlob);
+      const result = await this.client.finalizeHiRes({
+        promptText: FINAL_PROMPT,
+        base64Main: this.state.main.base64,
+        mimeMain: this.state.main.mime,
+        base64Child: blobBase64,
+        mimeChild: candidateBlob.type || 'image/jpeg',
+        references: this.state.refs,
+        sampling: this.state.sampling,
+      });
+      this.state.candidate = { imageUrl: result.imageUrl, notes: result.text || '' };
+      this.elements.finalCandidate.src = this.state.candidate.imageUrl;
+      this.elements.finalCandidateNotes.textContent = this.state.candidate.notes;
+      this.elements.finalCurrent.src = this.state.final.imageUrl || imageUrl;
+      this.elements.finalCurrentNotes.textContent = this.state.final.notes || '(no build notes yet)';
+      this.elements.finalModal.classList.remove('hidden');
+      this.elements.finalBackdrop.classList.remove('hidden');
+    } catch (error) {
+      window.alert(`Finalization failed: ${error.message || error}`);
+    }
+  }
+
+  #closeFinalModal() {
+    this.elements.finalModal.classList.add('hidden');
+    this.elements.finalBackdrop.classList.add('hidden');
   }
 }
-
-async function createThumb(blob) {
-  const canvas = document.createElement('canvas');
-  const img = document.createElement('img');
-  img.src = await blobToDataUrl(blob);
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-  });
-  const scale = Math.min(384 / img.naturalWidth, 384 / img.naturalHeight, 1);
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) {
-        resolve(result);
-      } else {
-        reject(new Error('Unable to create thumbnail'));
-      }
-    }, 'image/jpeg', 0.85);
-  });
-}
-
-function evaluateScaleConfidence(guesses) {
-  if (!guesses) return null;
-  const confidences = [guesses.width_m, guesses.depth_m, guesses.height_m]
-    .map((item) => item?.confidence)
-    .filter((value) => typeof value === 'number');
-  if (confidences.length === 0) return null;
-  const min = Math.min(...confidences);
-  if (Number.isFinite(min) && min < 0.4) {
-    return 'Scale confidence is low; measurements may need manual verification.';
-  }
-  return null;
-}
-

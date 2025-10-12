@@ -23,3 +23,9 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03 (Iteration 2 reset)
+- Replaced the chat-style MVP with the Iterative Interior Explorer shell: sticky header, key banner, setup card, room brief block, rounds stack, and sticky generate bar.
+- Implemented the Gemini IEC pipeline (room brief, iteration variants, hi-res finalization) with hybrid parser and mini text repair for missing descriptors.
+- Added image ingest/resizing helpers for main/reference photos, global sampling controls, and Compare & Decide modal for finalization.
+- Simplified the codebase by removing the v1 analysis timeline utilities and aligning the README with the Iteration 2 specification.

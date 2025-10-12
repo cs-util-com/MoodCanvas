@@ -1,209 +1,171 @@
-/* istanbul ignore file */
-import { ANALYSIS_SCHEMA } from '../constants/analysis-schema.js';
+import { base64ToBlob, blobToBase64 } from './image.js';
 
-const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta';
-const ANALYSIS_MODEL = 'models/gemini-2.5-flash:generateContent';
-const RENDER_MODEL = 'models/gemini-2.5-flash-image:generateContent';
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const TEXT_MODEL = 'models/gemini-2.5-flash:generateContent';
+const IMAGE_MODEL = 'models/gemini-2.5-flash-image:generateContent';
 
-export const DEFAULT_ANALYSIS_TIMEOUT_MS = 120_000;
-export const DEFAULT_RENDER_TIMEOUT_MS = 180_000;
+export const DEFAULT_SAMPLING = Object.freeze({ temperature: 0.7, topP: 0.9, topK: 32 });
 
-export class GeminiClient {
-  constructor({ apiKey = '', fetchImpl = fetch } = {}) {
-    this.apiKey = apiKey;
+const textPart = (text) => ({ text });
+const inlinePart = (mimeType, data) => ({ inlineData: { mimeType, data } });
+
+export class GeminiIECClient {
+  constructor({ fetchImpl = fetch } = {}) {
     this.fetchImpl = fetchImpl;
+    this.apiKey = '';
   }
 
-  setApiKey(apiKey) {
-    this.apiKey = apiKey;
+  setApiKey(key) {
+    this.apiKey = typeof key === 'string' ? key.trim() : '';
   }
 
-  async analyzeRoom({
-    imageBase64,
-    prompt,
-    signal,
-    timeoutMs = DEFAULT_ANALYSIS_TIMEOUT_MS,
-    schema = ANALYSIS_SCHEMA,
-  }) {
-    if (!imageBase64) {
-      throw new Error('imageBase64 is required for analysis');
-    }
-
-    const response = await this.#request({
-      model: ANALYSIS_MODEL,
-      body: {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: imageBase64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: schema,
+  async generateRoomBrief({ promptText, base64Main, mimeMain, sampling = DEFAULT_SAMPLING }) {
+    const body = {
+      contents: [
+        {
+          parts: [textPart(promptText), inlinePart(mimeMain, base64Main)],
         },
-      },
-      timeoutMs,
-      signal,
-    });
+      ],
+      generationConfig: { ...sampling },
+    };
 
-    const json = await response.json();
-    return parseAnalysisPayload(json);
+    const json = await this.#request(TEXT_MODEL, body);
+    const raw = (json?.candidates?.[0]?.content?.parts || [])
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    if (!raw) {
+      throw new Error('room_brief_empty');
+    }
+
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const paragraph = lines[0] ?? '';
+    const bullets = lines.slice(1).map((line) => line.replace(/^[•\-–]\s?/, '')).filter(Boolean);
+
+    return { paragraph, bullets, raw };
   }
 
-  async generateRenders({
-    prompt,
-    imageBase64,
-    count = 1,
-    signal,
-    timeoutMs = DEFAULT_RENDER_TIMEOUT_MS,
+  async generateVariant({
+    promptText,
+    base64Main,
+    mimeMain,
+    references = [],
+    sampling = DEFAULT_SAMPLING,
   }) {
-    if (!imageBase64) {
-      throw new Error('imageBase64 is required for renders');
-    }
-    if (!prompt) {
-      throw new Error('prompt is required for renders');
+    const parts = [textPart(promptText), inlinePart(mimeMain, base64Main)];
+    references.forEach((reference) => parts.push(inlinePart(reference.mime, reference.base64)));
+    const body = {
+      contents: [{ parts }],
+      generationConfig: { ...sampling },
+    };
+    const json = await this.#request(IMAGE_MODEL, body);
+    return this.parseFlashImageResponse(json);
+  }
+
+  async finalizeHiRes({
+    promptText,
+    base64Main,
+    mimeMain,
+    base64Child,
+    mimeChild,
+    references = [],
+    sampling = DEFAULT_SAMPLING,
+  }) {
+    const parts = [
+      textPart(promptText),
+      inlinePart(mimeMain, base64Main),
+      inlinePart(mimeChild, base64Child),
+    ];
+    references.forEach((reference) => parts.push(inlinePart(reference.mime, reference.base64)));
+    const body = {
+      contents: [{ parts }],
+      generationConfig: { ...sampling },
+    };
+    const json = await this.#request(IMAGE_MODEL, body);
+    return this.parseFlashImageResponse(json);
+  }
+
+  async parseFlashImageResponse(json) {
+    const output = { imageUrl: null, text: '', warnings: [] };
+    const parts = json?.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (!output.imageUrl && part.inlineData && /^image\//i.test(part.inlineData.mimeType ?? '')) {
+        const inlineData = part.inlineData.data || part.inlineData.bytes || '';
+        const blob = base64ToBlob(inlineData, part.inlineData.mimeType);
+        output.imageUrl = URL.createObjectURL(blob);
+      }
+      if (!output.text && typeof part.text === 'string' && part.text.trim()) {
+        output.text = part.text.trim();
+      }
+      if (output.imageUrl && output.text) break;
     }
 
-    const jobs = Array.from({ length: count }, (_, index) =>
-      this.#request({
-        model: RENDER_MODEL,
-        timeoutMs,
-        signal,
-        body: {
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: promptWithSeed(prompt, index) },
-                {
-                  inlineData: {
-                    mimeType: 'image/jpeg',
-                    data: imageBase64,
-                  },
-                },
-              ],
-            },
+    if (!output.imageUrl) {
+      throw new Error('no_image_in_response');
+    }
+
+    if (!output.text) {
+      output.warnings.push('auto-fixed: descriptor missing');
+      output.text = await this.#autoDescribeFromImageUrl(output.imageUrl);
+    }
+
+    return output;
+  }
+
+  async #autoDescribeFromImageUrl(url) {
+    const blob = await (await this.fetchImpl(url)).blob();
+    const base64 = await blobToBase64(blob);
+    const body = {
+      contents: [
+        {
+          parts: [
+            textPart(
+              'Write ONE short free-text paragraph describing this interior image (mood, key changes vs base, 2–3 ideas for next iteration). Avoid lists, headings or markdown.'
+            ),
+            inlinePart(blob.type || 'image/jpeg', base64),
           ],
         },
-      })
-        .then((response) => response.json())
-        .then((payload) => parseRenderPayload(payload))
-    );
-
-    return Promise.all(jobs);
-  }
-
-  async #request({ model, body, timeoutMs, signal }) {
-    this.#ensureKey();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
-
-    const mergedSignal = signal
-      ? mergeAbortSignals(signal, controller.signal)
-      : controller.signal;
-
-    try {
-      const requestOptions = {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: mergedSignal,
-      };
-
-      const response = await Reflect.apply(
-        this.fetchImpl,
-        globalThis,
-        [`${API_ROOT}/${model}`, requestOptions]
-      );
-
-      if (!response.ok) {
-        throw buildGeminiError(await safeJson(response), 'Gemini request failed', response.status);
-      }
-
-      return response;
-    } finally {
-      clearTimeout(timeoutId);
+      ],
+      generationConfig: { ...DEFAULT_SAMPLING, temperature: 0.7 },
+    };
+    const json = await this.#request(TEXT_MODEL, body);
+    const text = (json?.candidates?.[0]?.content?.parts || [])
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (!text) {
+      throw new Error('mini_text_call_empty');
     }
+    return text;
   }
 
-  #ensureKey() {
+  async #request(model, body) {
     if (!this.apiKey) {
       throw Object.assign(new Error('Gemini API key missing'), { code: 'missing-key' });
     }
+
+    const response = await this.fetchImpl(`${API_BASE}/${model}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => response.statusText);
+      const error = new Error('Gemini request failed');
+      error.status = response.status;
+      error.reason = message;
+      throw error;
+    }
+
+    return response.json();
   }
 }
 
-function mergeAbortSignals(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  const controller = new AbortController();
-  const abort = (event) => controller.abort(event?.target?.reason ?? a.reason ?? b.reason);
-  a.addEventListener('abort', abort);
-  b.addEventListener('abort', abort);
-  return controller.signal;
-}
-
-async function safeJson(response) {
-  try {
-    return await response.json();
-  } catch {
-    return { error: response.statusText };
-  }
-}
-
-function parseAnalysisPayload(json) {
-  const candidate = json.candidates?.[0];
-  if (!candidate) {
-    throw buildGeminiError(json, 'No analysis candidate returned');
-  }
-  const part = candidate.content?.parts?.[0];
-  if (!part) {
-    throw buildGeminiError(json, 'No analysis content returned');
-  }
-  if (part.text) {
-    return JSON.parse(part.text);
-  }
-  if (part.jsonValue) {
-    return part.jsonValue;
-  }
-  throw buildGeminiError(json, 'Unsupported analysis payload shape');
-}
-
-function buildGeminiError(payload, message, status) {
-  const error = new Error(message);
-  error.details = payload;
-  error.status = status ?? payload?.error?.code;
-  error.reason = payload?.error?.message;
-  return error;
-}
-
-function parseRenderPayload(payload) {
-  const candidate = payload.candidates?.[0];
-  if (!candidate) {
-    throw buildGeminiError(payload, 'No render candidate returned');
-  }
-  const part = candidate.content?.parts?.find((p) => p.inlineData);
-  if (!part) {
-    throw buildGeminiError(payload, 'Render candidate missing inline data');
-  }
-  return {
-    mimeType: part.inlineData.mimeType,
-    data: part.inlineData.data,
-  };
-}
-
-function promptWithSeed(prompt, seed) {
-  return `${prompt}\nSeed Hint: ${seed}`;
-}
+export const parts = { textPart, inlinePart };

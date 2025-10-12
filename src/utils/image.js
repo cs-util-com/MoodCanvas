@@ -18,6 +18,31 @@ export async function normalizeImageFile(file) {
   };
 }
 
+export async function resizeImageFile(file, maxLongEdge = 2048, quality = 0.9) {
+  if (!(file instanceof Blob)) {
+    throw new TypeError('Expected a File or Blob instance');
+  }
+
+  const source = file.slice(0, file.size, file.type || 'image/jpeg');
+  const bitmap = await createImageBitmapWithOrientation(source);
+  const { width, height } = getBitmapSize(bitmap);
+  const scale = Math.min(1, maxLongEdge / Math.max(width, height));
+  const targetWidth = Math.round(width * scale);
+  const targetHeight = Math.round(height * scale);
+  const resized = await drawBitmapToBlob(bitmap, source.type, targetWidth, targetHeight, quality);
+  const base64 = await blobToBase64(resized);
+  const url = URL.createObjectURL(resized);
+
+  return {
+    blob: resized,
+    base64,
+    url,
+    width: targetWidth,
+    height: targetHeight,
+    mime: resized.type || source.type || 'image/jpeg',
+  };
+}
+
 async function createThumbnail(bitmap, mime) {
   const size = getBitmapSize(bitmap);
   const longest = Math.max(size.width, size.height);
