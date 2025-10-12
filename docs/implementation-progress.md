@@ -56,6 +56,12 @@
 - Hid the generate-next-iteration bar until the first gallery exists and stopped mounting the compare-final modal until a hi-res candidate is available, keeping the pre-run UI minimal.
 - Added layout/unit tests that lock in the new control order and lazy modal creation to catch regressions.
 
+## 2025-10-12 (silent brief editing)
+
+- Swapped the static Silent Room Brief copy for editable inputs so the summary paragraph and constraint bullets can be tuned before launching a run.
+- Added guardrails for constraint rows (add/remove up to five) and wired state updates on input events so iteration prompts reuse the edited text.
+- Extended the layout spec to assert the editable controls render with the generated brief content.
+
 ```
 
 ```

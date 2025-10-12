@@ -389,13 +389,114 @@ export class MoodCanvasApp {
       'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
     const loading = this.state.generatingRoomBrief;
     const brief = this.state.roomBrief;
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">2. Silent room brief</h2>
-      <p class="text-sm text-plum-muted">One-time guidance distilled into a paragraph with 3–5 constraints. Automatically regenerates when purpose changes.</p>
-      ${loading ? '<div class="animate-pulse text-sm text-plum-muted">Generating room brief…</div>' : ''}
-      ${brief ? `<p class="text-sm text-plum-text">${brief.paragraph}</p>` : ''}
-      ${brief ? `<ul class="list-disc space-y-1 pl-5 text-sm text-plum-muted">${brief.bullets.map((item) => `<li>${item}</li>`).join('')}</ul>` : ''}
-    `;
+
+    const heading = document.createElement('h2');
+    heading.className = 'text-lg font-semibold';
+    heading.textContent = '2. Silent room brief';
+    card.appendChild(heading);
+
+    const description = document.createElement('p');
+    description.className = 'text-sm text-plum-muted';
+    description.textContent =
+      'One-time guidance distilled into a paragraph with 3–5 constraints. Automatically regenerates when purpose changes.';
+    card.appendChild(description);
+
+    if (loading) {
+      const loadingLabel = document.createElement('div');
+      loadingLabel.className = 'animate-pulse text-sm text-plum-muted';
+      loadingLabel.textContent = 'Generating room brief…';
+      card.appendChild(loadingLabel);
+    }
+
+    if (brief) {
+      const editor = document.createElement('div');
+      editor.className = 'flex flex-col gap-4';
+
+      const paragraphField = document.createElement('label');
+      paragraphField.className = 'flex flex-col gap-2 text-sm';
+      paragraphField.setAttribute('for', 'roomBriefParagraph');
+      paragraphField.innerHTML = '<span>Summary paragraph</span>';
+
+      const paragraphInput = document.createElement('textarea');
+      paragraphInput.id = 'roomBriefParagraph';
+      paragraphInput.rows = 4;
+      paragraphInput.value = brief.paragraph || '';
+      paragraphInput.disabled = loading;
+      paragraphInput.className =
+        'rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm text-plum-text focus:outline-none focus:ring-2 focus:ring-peach/70';
+      paragraphInput.addEventListener('input', (event) => {
+        if (!this.state.roomBrief) return;
+        this.state.roomBrief.paragraph = event.target.value;
+      });
+      paragraphField.appendChild(paragraphInput);
+      editor.appendChild(paragraphField);
+
+      const bulletWrapper = document.createElement('div');
+      bulletWrapper.className = 'flex flex-col gap-2';
+
+      const bulletLabel = document.createElement('span');
+      bulletLabel.className = 'text-sm';
+      bulletLabel.textContent = 'Constraints (edit or clear as needed)';
+      bulletWrapper.appendChild(bulletLabel);
+
+      const bullets = Array.isArray(brief.bullets) ? brief.bullets : [];
+      bullets.forEach((item, index) => {
+        const bulletRow = document.createElement('div');
+        bulletRow.className = 'flex items-start gap-2';
+
+        const bulletInput = document.createElement('input');
+        bulletInput.type = 'text';
+        bulletInput.value = item || '';
+        bulletInput.disabled = loading;
+        bulletInput.dataset.testid = 'room-brief-constraint';
+        bulletInput.className =
+          'flex-1 rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm text-plum-text focus:outline-none focus:ring-2 focus:ring-peach/70';
+        bulletInput.addEventListener('input', (event) => {
+          if (!this.state.roomBrief?.bullets) return;
+          this.state.roomBrief.bullets[index] = event.target.value;
+        });
+        bulletRow.appendChild(bulletInput);
+
+        if (bullets.length > 1) {
+          const removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className =
+            'rounded-full border border-plum-border/40 px-3 py-1 text-xs text-plum-muted hover:border-peach hover:text-peach';
+          removeBtn.textContent = 'Remove';
+          removeBtn.disabled = loading;
+          removeBtn.addEventListener('click', () => {
+            if (!this.state.roomBrief?.bullets) return;
+            this.state.roomBrief.bullets = this.state.roomBrief.bullets.filter(
+              (_, bulletIdx) => bulletIdx !== index
+            );
+            this.renderTimeline();
+          });
+          bulletRow.appendChild(removeBtn);
+        }
+
+        bulletWrapper.appendChild(bulletRow);
+      });
+
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className =
+        'self-start text-xs font-medium text-peach hover:text-peach/70';
+      addBtn.textContent = 'Add constraint';
+      addBtn.disabled = loading || bullets.length >= 5;
+      addBtn.addEventListener('click', () => {
+        if (!this.state.roomBrief) return;
+        if (!Array.isArray(this.state.roomBrief.bullets)) {
+          this.state.roomBrief.bullets = [];
+        }
+        if (this.state.roomBrief.bullets.length >= 5) return;
+        this.state.roomBrief.bullets = [...this.state.roomBrief.bullets, ''];
+        this.renderTimeline();
+      });
+      bulletWrapper.appendChild(addBtn);
+
+      editor.appendChild(bulletWrapper);
+      card.appendChild(editor);
+    }
     return card;
   }
 

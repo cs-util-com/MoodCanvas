@@ -36,6 +36,16 @@ describe('MoodCanvasApp layout scaffolding', () => {
     expect(briefIndex).toBeGreaterThan(-1);
     expect(startIndex).toBe(briefIndex + 1);
 
+    const paragraphField = root.querySelector('#roomBriefParagraph');
+    expect(paragraphField).not.toBeNull();
+    expect(paragraphField.value).toBe('Sample brief');
+
+    const constraintInputs = root.querySelectorAll(
+      '[data-testid="room-brief-constraint"]'
+    );
+    expect(constraintInputs).toHaveLength(1);
+    expect(constraintInputs[0].value).toBe('alpha');
+
     app.destroy();
   });
 
