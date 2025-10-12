@@ -237,7 +237,6 @@ export class MoodCanvasApp {
         this.render();
       }
     });
-
   }
   async bootstrapProject() {
     const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
