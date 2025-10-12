@@ -104,7 +104,7 @@ export class MoodCanvasApp {
           </div>
         </header>
         <main class="flex-1">
-          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="timeline"></div>
+          <div class="w-full px-6 py-10 flex flex-col gap-6" id="timeline"></div>
         </main>
       </div>
       <div id="generateBar" class="fixed inset-x-0 bottom-0 z-40 hidden border-t border-plum-border/50 bg-plum-surface/95 backdrop-blur">
@@ -477,7 +477,7 @@ export class MoodCanvasApp {
         </div>
         <p class="text-sm text-plum-muted">Tiles appear as they finish. Select favorites to unlock the next round.</p>
       </header>
-      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" id="tileGrid-${round.id}">
+  <div class="grid grid-cols-1 gap-4" id="tileGrid-${round.id}">
         ${round.tiles.map((tile) => this.renderTileMarkup(round, tile)).join('')}
       </div>
     `;
@@ -557,7 +557,7 @@ export class MoodCanvasApp {
         </div>`;
     } else {
       body = `
-        <div class="relative h-48 overflow-hidden rounded-xl2 border border-plum-border/40">
+        <div class="relative w-full overflow-hidden rounded-xl2 border border-plum-border/40" style="aspect-ratio: 3 / 2;">
           <img src="${tile.imageUrl}" alt="Iteration render" class="h-full w-full object-cover" loading="lazy" />
           <button data-action="open" class="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white">Open</button>
         </div>

@@ -35,3 +35,7 @@
 - Implemented Gemini iteration utilities (room brief, variant, finalization parsers) with resilient text auto-repair and a pool-based runner, backed by unit tests covering parser edge cases and prompt construction.
 - Updated the silent room-brief prompt to match the Iteration 2 spec block format, including explicit input listings and constraint hints.
 - Converted the initial "Start" control into a dual-purpose restart button that clears generated iterations per spec, and we now reset queued favorites as soon as a new round begins so the next selection cycle starts cleanly.
+
+## 2025-10-12 (gallery layout tweak)
+
+- Expanded the iteration timeline container to the full viewport width, forced iteration tiles into a single-column grid, and switched the preview frames to a 3:2 aspect ratio so each render scales tall enough to fill the available space on every screen size.
