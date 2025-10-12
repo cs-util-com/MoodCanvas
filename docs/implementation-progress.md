@@ -27,3 +27,16 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-05 (Iteration 2 loop overhaul)
+
+- Replaced the gallery/hero pipeline with the Iteration 2 IEC loop: room ingest, silent room brief, 12-variant rounds, sticky guidance bar, and hi-res final compare modal.
+- Added new Gemini helpers for room brief, iterative variants, and finalization plus robust flash-image parsing with auto-repair when descriptors are missing.
+- Implemented diversity deck rotation, favorite resets per round, reference drag-sort, and global sampling controls with persisted settings.
+- Updated tests to cover the new prompt builders powering the iteration flow.
+
+## 2025-10-06 (Iteration 2 polish)
+
+- Added a bring-your-own-key banner and tightened the generate bar visibility to match the Iteration 2 spec UX rules.
+- Linked iteration tiles to open the full image in a new tab and ensured missing inline image payloads surface retries.
+- Expanded iteration client unit tests to guard sampling fallbacks and empty inline data branches, restoring coverage above the global threshold.

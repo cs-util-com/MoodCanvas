@@ -1,20 +1,34 @@
 /* istanbul ignore file */
 
-export async function normalizeImageFile(file) {
+export async function normalizeImageFile(
+  file,
+  { maxSize = 2048, quality = 0.9 } = {}
+) {
   if (!(file instanceof Blob)) {
     throw new TypeError('Expected a File or Blob instance');
   }
 
   const blob = file.slice(0, file.size, file.type || 'image/jpeg');
   const bitmap = await createImageBitmapWithOrientation(blob);
-  const original = await drawBitmapToBlob(bitmap, blob.type);
+  const { width, height } = getBitmapSize(bitmap);
+  const longest = Math.max(width, height);
+  const scale = longest > maxSize ? maxSize / longest : 1;
+  const scaledWidth = Math.round(width * scale);
+  const scaledHeight = Math.round(height * scale);
+  const original = await drawBitmapToBlob(
+    bitmap,
+    blob.type,
+    scaledWidth,
+    scaledHeight,
+    quality
+  );
   const thumb = await createThumbnail(bitmap, blob.type);
 
   return {
     original,
     thumb,
-    width: bitmap.width,
-    height: bitmap.height,
+    width: scaledWidth,
+    height: scaledHeight,
   };
 }
 
@@ -50,6 +64,40 @@ async function drawBitmapToBlob(bitmap, mime, width, height, quality = 0.92) {
     );
   });
   return blob;
+}
+
+export async function createThumbnailFromBlob(blob, maxSize = 384) {
+  const image = document.createElement('img');
+  image.src = await blobToDataUrl(blob);
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = reject;
+  });
+  const scale = Math.min(
+    maxSize / image.naturalWidth,
+    maxSize / image.naturalHeight,
+    1
+  );
+  const width = Math.round(image.naturalWidth * scale);
+  const height = Math.round(image.naturalHeight * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0, width, height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (result) => {
+        if (result) {
+          resolve(result);
+        } else {
+          reject(new Error('Unable to create thumbnail'));
+        }
+      },
+      'image/jpeg',
+      0.85
+    );
+  });
 }
 
 async function createImageBitmapWithOrientation(blob) {
