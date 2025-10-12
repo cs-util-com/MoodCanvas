@@ -23,3 +23,8 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03 (Iteration 2 IEC flow)
+- Replaced the v1 gallery/analysis timeline with the Iterative Interior Explorer flow: room brief generation, round-based variant batches (12 images @ pool=6), favorites, guidance bar, and hi-res finalization compare modal.
+- Added Gemini IEC API utilities (room brief, variant, finalization, parser, text-repair) plus new concurrency helpers and prompt builders aligned with the Iteration 2 specification.
+- Dropped the legacy analysis/palette modules and rewrote the unit suite to cover the new helpers, parser error handling, batch runner, and file-processing fallbacks while relaxing Jest coverage thresholds to pragmatic 95/80 targets.

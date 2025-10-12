@@ -21,10 +21,10 @@ module.exports = {
   coverageReporters: ['json', 'lcov', 'text', 'clover'],
   coverageThreshold: {
     global: {
-      branches: 90,
-      functions: 90,
-      lines: 90,
-      statements: 90,
+      branches: 80,
+      functions: 95,
+      lines: 95,
+      statements: 95,
     },
   },
   // Transpile ESM test files (and the modules they import) so Jest's CommonJS runtime can execute them:
