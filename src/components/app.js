@@ -557,7 +557,7 @@ export class MoodCanvasApp {
         </div>`;
     } else {
       body = `
-        <div class="relative w-full overflow-hidden rounded-xl2 border border-plum-border/40" style="aspect-ratio: 3 / 2;">
+        <div class="relative w-full overflow-hidden rounded-xl2 border border-plum-border/40 aspect-[3/2]">
           <img src="${tile.imageUrl}" alt="Iteration render" class="h-full w-full object-cover" loading="lazy" />
           <button data-action="open" class="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white">Open</button>
         </div>
