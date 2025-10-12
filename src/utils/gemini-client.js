@@ -1,12 +1,14 @@
-/* istanbul ignore file */
-import { ANALYSIS_SCHEMA } from '../constants/analysis-schema.js';
-
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta';
-const ANALYSIS_MODEL = 'models/gemini-2.5-flash:generateContent';
-const RENDER_MODEL = 'models/gemini-2.5-flash-image:generateContent';
+const FLASH_MODEL = 'models/gemini-2.5-flash:generateContent';
+const FLASH_IMAGE_MODEL = 'models/gemini-2.5-flash-image:generateContent';
 
-export const DEFAULT_ANALYSIS_TIMEOUT_MS = 120_000;
-export const DEFAULT_RENDER_TIMEOUT_MS = 180_000;
+export const DEFAULT_TEXT_TIMEOUT_MS = 120_000;
+export const DEFAULT_IMAGE_TIMEOUT_MS = 180_000;
+export const DEFAULT_GENERATION_CONFIG = {
+  temperature: 0.7,
+  topP: 0.9,
+  topK: 32,
+};
 
 export class GeminiClient {
   constructor({ apiKey = '', fetchImpl = fetch } = {}) {
@@ -18,88 +20,52 @@ export class GeminiClient {
     this.apiKey = apiKey;
   }
 
-  async analyzeRoom({
-    imageBase64,
-    prompt,
+  async callFlash({
+    parts,
+    generationConfig = {},
+    responseMimeType,
+    responseSchema,
+    timeoutMs = DEFAULT_TEXT_TIMEOUT_MS,
     signal,
-    timeoutMs = DEFAULT_ANALYSIS_TIMEOUT_MS,
-    schema = ANALYSIS_SCHEMA,
-  }) {
-    if (!imageBase64) {
-      throw new Error('imageBase64 is required for analysis');
-    }
+  } = {}) {
+    validateParts(parts);
 
-    const response = await this.#request({
-      model: ANALYSIS_MODEL,
-      body: {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: imageBase64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: schema,
+    const config = buildGenerationConfig(generationConfig, responseMimeType, responseSchema);
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts,
         },
-      },
-      timeoutMs,
-      signal,
-    });
+      ],
+      generationConfig: config,
+    };
 
-    const json = await response.json();
-    return parseAnalysisPayload(json);
+    const response = await this.#request({ model: FLASH_MODEL, body, timeoutMs, signal });
+    return response.json();
   }
 
-  async generateRenders({
-    prompt,
-    imageBase64,
-    count = 1,
+  async callFlashImage({
+    parts,
+    generationConfig = {},
+    timeoutMs = DEFAULT_IMAGE_TIMEOUT_MS,
     signal,
-    timeoutMs = DEFAULT_RENDER_TIMEOUT_MS,
-  }) {
-    if (!imageBase64) {
-      throw new Error('imageBase64 is required for renders');
-    }
-    if (!prompt) {
-      throw new Error('prompt is required for renders');
-    }
+  } = {}) {
+    validateParts(parts);
 
-    const jobs = Array.from({ length: count }, (_, index) =>
-      this.#request({
-        model: RENDER_MODEL,
-        timeoutMs,
-        signal,
-        body: {
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: promptWithSeed(prompt, index) },
-                {
-                  inlineData: {
-                    mimeType: 'image/jpeg',
-                    data: imageBase64,
-                  },
-                },
-              ],
-            },
-          ],
+    const config = buildGenerationConfig(generationConfig);
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts,
         },
-      })
-        .then((response) => response.json())
-        .then((payload) => parseRenderPayload(payload))
-    );
+      ],
+      generationConfig: config,
+    };
 
-    return Promise.all(jobs);
+    const response = await this.#request({ model: FLASH_IMAGE_MODEL, body, timeoutMs, signal });
+    return response.json();
   }
 
   async #request({ model, body, timeoutMs, signal }) {
@@ -107,9 +73,7 @@ export class GeminiClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
 
-    const mergedSignal = signal
-      ? mergeAbortSignals(signal, controller.signal)
-      : controller.signal;
+    const mergedSignal = signal ? mergeAbortSignals(signal, controller.signal) : controller.signal;
 
     try {
       const requestOptions = {
@@ -145,6 +109,23 @@ export class GeminiClient {
   }
 }
 
+function validateParts(parts) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    throw new Error('parts are required for Gemini requests');
+  }
+}
+
+function buildGenerationConfig(overrides = {}, responseMimeType, responseSchema) {
+  const config = { ...DEFAULT_GENERATION_CONFIG, ...overrides };
+  if (responseMimeType) {
+    config.responseMimeType = responseMimeType;
+  }
+  if (responseSchema) {
+    config.responseSchema = responseSchema;
+  }
+  return config;
+}
+
 function mergeAbortSignals(a, b) {
   if (!a) return b;
   if (!b) return a;
@@ -163,24 +144,6 @@ async function safeJson(response) {
   }
 }
 
-function parseAnalysisPayload(json) {
-  const candidate = json.candidates?.[0];
-  if (!candidate) {
-    throw buildGeminiError(json, 'No analysis candidate returned');
-  }
-  const part = candidate.content?.parts?.[0];
-  if (!part) {
-    throw buildGeminiError(json, 'No analysis content returned');
-  }
-  if (part.text) {
-    return JSON.parse(part.text);
-  }
-  if (part.jsonValue) {
-    return part.jsonValue;
-  }
-  throw buildGeminiError(json, 'Unsupported analysis payload shape');
-}
-
 function buildGeminiError(payload, message, status) {
   const error = new Error(message);
   error.details = payload;
@@ -189,21 +152,3 @@ function buildGeminiError(payload, message, status) {
   return error;
 }
 
-function parseRenderPayload(payload) {
-  const candidate = payload.candidates?.[0];
-  if (!candidate) {
-    throw buildGeminiError(payload, 'No render candidate returned');
-  }
-  const part = candidate.content?.parts?.find((p) => p.inlineData);
-  if (!part) {
-    throw buildGeminiError(payload, 'Render candidate missing inline data');
-  }
-  return {
-    mimeType: part.inlineData.mimeType,
-    data: part.inlineData.data,
-  };
-}
-
-function promptWithSeed(prompt, seed) {
-  return `${prompt}\nSeed Hint: ${seed}`;
-}

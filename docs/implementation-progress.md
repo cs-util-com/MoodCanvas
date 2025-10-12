@@ -23,3 +23,12 @@
 - Reworked palette option synthesis to operate in HSL space and inject stronger hue/saturation shifts plus complementary fallbacks so the five palettes feel distinct.
 - Extracted the palette helpers into their own utility module and updated the app shell to consume the shared logic.
 - Added extensive unit coverage for edge cases (invalid hex values, provided-only palettes, grayscale inputs) to keep the global coverage gate above 90%.
+
+## 2025-10-03
+- Replaced the v1 chat-style workflow with the iteration loop defined in Iteration2Spec: setup card, silent room brief, iterative rounds, favorites gallery, and hi-res finalisation.
+- Rewrote the Gemini client wrapper to expose generic flash / flash-image helpers with shared generation config defaults.
+- Added new utilities for diversity deck coverage, flash-image parsing, prompt construction, room brief parsing, pool execution, and updated image normalization (≤ 2048 px long edge + 512 px thumb).
+- Implemented the new MoodCanvas app shell with sticky generate bar, per-tile retry, favorites + notes, hi-res compare modal, and BYOK/Restart handling.
+- Removed the legacy analysis/gallery modules and refreshed the README to document the new iterative spec.
+- Expanded the Jest suite with coverage for the new utilities (diversity deck, prompt builders, pool helper, parser, room brief parser, image normalization).
+- Added regression tests for prompt-builder optional branches (purpose fallback, guidance omission, missing axis/finalization guards) to improve branch coverage.

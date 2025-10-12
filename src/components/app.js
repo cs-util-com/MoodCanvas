@@ -6,7 +6,12 @@ import {
   onKeyChange,
 } from '../utils/key-store.js';
 import { GeminiClient } from '../utils/gemini-client.js';
-import { normalizeImageFile, blobToBase64, blobToDataUrl, base64ToBlob } from '../utils/image.js';
+import {
+  normalizeImageFile,
+  blobToBase64,
+  blobToDataUrl,
+  base64ToBlob,
+} from '../utils/image.js';
 import {
   ensureProject,
   getProject,
@@ -14,43 +19,45 @@ import {
   saveArtifact,
   appendEvent,
 } from '../utils/project-store.js';
-import { SUPPORTED_ROOM_FUNCTIONS } from '../constants/analysis-schema.js';
 import {
-  buildAnalysisPrompt,
-  buildABPrompts,
-  buildHeroPrompts,
-  buildMiniList,
-  normalizeRenderGallery,
-} from '../utils/prompts.js';
-import { ensurePaletteOptions } from '../utils/palette.js';
+  buildRoomBriefPrompt,
+  buildIterationPrompt,
+  buildDescriptorRepairPrompt,
+  buildFinalizationPrompt,
+  buildFinalizationRepairPrompt,
+} from '../utils/prompt-builder.js';
+import { parseRoomBrief } from '../utils/room-brief-parser.js';
+import { parseFlashImageResponse } from '../utils/flash-image-parser.js';
+import { buildDiversityDeck } from '../utils/diversity-deck.js';
+import { runLimitedPool } from '../utils/pool.js';
 
 const STORAGE_PROJECT_KEY = 'moodcanvas.currentProjectId';
-const MAX_FAVORITES = 3;
+const ITERATION_TILE_COUNT = 12;
+const ITERATION_POOL_SIZE = 6;
+const MAX_REFERENCES = 2;
 
 export class MoodCanvasApp {
   constructor(root) {
     this.root = root;
     this.client = new GeminiClient();
+    this.unsubscribeKey = null;
     this.state = {
-      loading: false,
       apiKey: '',
       project: null,
-      photo: null,
-      analysis: null,
-      gallery: [],
-      favorites: new Set(),
-      abVariants: [],
-      heroRenders: [],
-      quickWins: null,
-      miniList: null,
-      palette: null,
-      paletteOptions: [],
-      selectedPaletteIndex: null,
-      warning: null,
-      error: null,
+      basePhoto: null,
+      references: [],
+      purpose: '',
+      globalGuidance: '',
+      roomBrief: null,
+      roomBriefLoading: false,
+      roomBriefError: null,
+      iterations: [],
+      finalRender: null,
+      finalCandidate: null,
+      generatingIteration: false,
+      finalizing: false,
+      bannerError: null,
     };
-    this.unsubscribeKey = null;
-    this.controller = null;
   }
 
   async init() {
@@ -61,10 +68,7 @@ export class MoodCanvasApp {
   }
 
   destroy() {
-    if (this.unsubscribeKey) {
-      this.unsubscribeKey();
-      this.unsubscribeKey = null;
-    }
+    this.unsubscribeKey?.();
   }
 
   renderShell() {
@@ -74,22 +78,24 @@ export class MoodCanvasApp {
           <div class="mx-auto w-full max-w-5xl px-6 py-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p class="text-peach uppercase tracking-[0.3em] text-xs font-semibold">MoodCanvas</p>
-              <h1 class="text-2xl md:text-3xl font-semibold">Interior Design Assistant</h1>
+              <h1 class="text-2xl md:text-3xl font-semibold">Iterative Interior Explorer</h1>
               <p class="text-sm text-plum-muted max-w-xl">
-                Upload a single empty-room photo, explore tailored styles, and collect actionable next steps without leaving your browser.
+                Upload a room photo, collect references, and iterate through mood-driven variants until you lock a final design — all client-side.
               </p>
             </div>
             <div class="flex items-center gap-3">
               <span id="keyStatus" class="rounded-full border border-plum-border/40 px-3 py-1 text-xs uppercase tracking-widest text-plum-muted"></span>
-              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry text-white px-4 py-2 text-sm font-medium transition">
-                Settings
-              </button>
+              <button id="restartBtn" class="rounded-full border border-plum-border/40 px-4 py-2 text-sm text-plum-text hover:bg-plum-surface-2" type="button">Restart</button>
+              <button id="settingsBtn" class="rounded-full bg-raspberry/90 hover:bg-raspberry text-white px-4 py-2 text-sm font-medium transition" type="button">Settings</button>
             </div>
           </div>
         </header>
         <main class="flex-1">
-          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="timeline"></div>
+          <div class="mx-auto w-full max-w-5xl px-6 py-10 flex flex-col gap-6" id="stack"></div>
         </main>
+        <footer class="bg-plum-surface-2 border-t border-plum-border/40">
+          <div id="generateBar" class="mx-auto flex w-full max-w-5xl px-6 py-4"></div>
+        </footer>
       </div>
       <dialog id="settingsModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
         <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
@@ -111,12 +117,32 @@ export class MoodCanvasApp {
           </div>
         </form>
       </dialog>
+      <dialog id="restartModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0">
+        <form method="dialog" class="flex flex-col gap-6 p-8 min-w-[320px]">
+          <header>
+            <h2 class="text-xl font-semibold">Restart project</h2>
+            <p class="text-sm text-plum-muted">Clear generated rounds, favorites, and the current final. Keep the base photo, purpose, references, room brief, and settings.</p>
+          </header>
+          <div class="flex justify-end gap-3">
+            <button value="cancel" class="rounded-full px-4 py-2 text-sm bg-plum-surface hover:bg-plum-surface-2 border border-plum-border/60">Cancel</button>
+            <button value="confirm" class="rounded-full px-4 py-2 text-sm bg-raspberry text-white hover:bg-raspberry/90">Restart</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="finalCompareModal" class="backdrop:bg-black/70 rounded-xl2 bg-plum-surface-2 text-plum-text shadow-dialog p-0 max-w-4xl">
+        <div class="flex flex-col gap-6 p-8" id="finalCompareContent"></div>
+      </dialog>
     `;
 
-    this.timelineEl = this.root.querySelector('#timeline');
+    this.stackEl = this.root.querySelector('#stack');
     this.keyStatusEl = this.root.querySelector('#keyStatus');
-    this.settingsBtn = this.root.querySelector('#settingsBtn');
+    this.generateBarEl = this.root.querySelector('#generateBar');
     this.settingsModal = this.root.querySelector('#settingsModal');
+    this.restartModal = this.root.querySelector('#restartModal');
+    this.finalModal = this.root.querySelector('#finalCompareModal');
+    this.finalModalContent = this.root.querySelector('#finalCompareContent');
+    this.settingsBtn = this.root.querySelector('#settingsBtn');
+    this.restartBtn = this.root.querySelector('#restartBtn');
     this.keyInput = this.root.querySelector('#keyInput');
     this.clearKeyBtn = this.root.querySelector('#clearKeyBtn');
 
@@ -124,6 +150,11 @@ export class MoodCanvasApp {
       if (this.settingsModal.open) return;
       this.keyInput.value = this.state.apiKey;
       this.settingsModal.showModal();
+    });
+
+    this.restartBtn.addEventListener('click', () => {
+      if (this.restartModal.open) return;
+      this.restartModal.showModal();
     });
 
     this.settingsModal.addEventListener('close', () => {
@@ -142,8 +173,13 @@ export class MoodCanvasApp {
       clearGeminiKey();
       this.keyInput.value = '';
     });
-  }
 
+    this.restartModal.addEventListener('close', () => {
+      if (this.restartModal.returnValue === 'confirm') {
+        this.performRestart();
+      }
+    });
+  }
   async bootstrapProject() {
     const existingId = localStorage.getItem(STORAGE_PROJECT_KEY);
     let project = await getProject(existingId);
@@ -163,13 +199,46 @@ export class MoodCanvasApp {
       this.state.apiKey = next;
       this.client.setApiKey(next);
       this.renderKeyStatus();
-      this.render();
+      this.renderGenerateBar();
     });
   }
 
   render() {
     this.renderKeyStatus();
-    this.renderTimeline();
+    if (!this.stackEl) return;
+    this.stackEl.innerHTML = '';
+
+    const setupCard = this.renderSetupCard();
+    this.stackEl.appendChild(setupCard);
+
+    if (this.state.roomBrief || this.state.roomBriefLoading || this.state.roomBriefError) {
+      this.stackEl.appendChild(this.renderRoomBriefCard());
+    }
+
+    const favoritesCard = this.renderFavoritesCard();
+    if (favoritesCard) {
+      this.stackEl.appendChild(favoritesCard);
+    }
+
+    const iterationsCard = this.renderIterationsStack();
+    if (iterationsCard) {
+      this.stackEl.appendChild(iterationsCard);
+    }
+
+    const finalCard = this.renderFinalCard();
+    if (finalCard) {
+      this.stackEl.appendChild(finalCard);
+    }
+
+    if (this.state.bannerError) {
+      const banner = document.createElement('div');
+      banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/10 px-4 py-3 text-raspberry text-sm';
+      banner.textContent = this.state.bannerError;
+      this.stackEl.prepend(banner);
+    }
+
+    this.renderGenerateBar();
+    this.renderFinalCompareDialog();
   }
 
   renderKeyStatus() {
@@ -183,742 +252,997 @@ export class MoodCanvasApp {
     }
   }
 
-  renderTimeline() {
-    this.timelineEl.innerHTML = '';
-    this.timelineEl.appendChild(this.renderUploadCard());
-    if (!this.state.apiKey) {
-      this.timelineEl.appendChild(this.renderKeyBanner());
-    }
-    if (this.state.photo) {
-      this.timelineEl.appendChild(this.renderPhotoCard());
-      this.timelineEl.appendChild(this.renderAnalysisCard());
-    }
-    if (this.state.analysis) {
-      this.timelineEl.appendChild(this.renderAnalysisResults());
-      if (this.state.palette) {
-        this.timelineEl.appendChild(this.renderGalleryCard());
-      }
-    }
-    if (this.state.abVariants.length > 0) {
-      this.timelineEl.appendChild(this.renderABCard());
-    }
-    if (this.state.heroRenders.length > 0) {
-      this.timelineEl.appendChild(this.renderHeroCard());
-    }
-    if (this.state.quickWins) {
-      this.timelineEl.appendChild(this.renderInsightsCard());
-    }
-  }
-
-  renderUploadCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 shadow-inner shadow-black/10 flex flex-col gap-4';
-    card.innerHTML = `
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold">1. Upload your room photo</h2>
-          <p class="text-sm text-plum-muted">Use a single JPG or PNG. MoodCanvas stores the image locally and resizes a private thumbnail.</p>
-        </div>
-        ${this.state.photo ? `<button class="text-xs text-peach underline" id="replacePhoto">Replace</button>` : ''}
-      </div>
-      <label class="relative flex h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl2 border border-dashed border-peach/60 bg-plum-surface text-center text-plum-muted transition hover:border-peach hover:text-peach">
-        <input type="file" accept="image/jpeg,image/png" capture="environment" class="absolute inset-0 opacity-0" ${this.state.loading ? 'disabled' : ''} />
-        <span class="text-sm">Tap to upload</span>
-        <span class="text-xs">Long edge ≤ 2048px • Metadata preserved</span>
-      </label>
-    `;
-
-    const input = card.querySelector('input[type="file"]');
-    input.addEventListener('change', (event) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        this.importPhoto(file).catch((error) => this.reportError(error));
-      }
-    });
-
-    const replaceBtn = card.querySelector('#replacePhoto');
-    if (replaceBtn) {
-      replaceBtn.addEventListener('click', () => {
-        this.resetAfter('photo');
-      });
-    }
-
-    return card;
-  }
-
-  renderKeyBanner() {
-    const banner = document.createElement('section');
-    banner.className = 'rounded-xl2 border border-raspberry/50 bg-raspberry/15 p-5 text-sm text-raspberry flex flex-col gap-3';
-    banner.innerHTML = `
-      <div class="font-medium">Bring your own Google Gemini key</div>
-  <p class="text-raspberry/90">Get a free API key from <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noreferrer" class="underline">Google AI Studio</a>. The key is stored only in your browser.</p>
-      <button class="self-start rounded-full border border-raspberry/60 px-3 py-1 text-xs" id="openSettings">Open settings</button>
-    `;
-    banner.querySelector('#openSettings').addEventListener('click', () => this.settingsModal.showModal());
-    return banner;
-  }
-
-  renderPhotoCard() {
-    const { photo } = this.state;
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">2. Confirm scope & intended function</h2>
-      <div class="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <div class="rounded-xl2 overflow-hidden border border-plum-border/40">
-          <img src="${photo.thumbUrl}" alt="Uploaded room" class="block w-full h-full object-cover" loading="lazy" />
-        </div>
-        <form class="flex flex-col gap-3" id="scopeForm">
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intended use</span>
-            <select name="function" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70">
-              ${SUPPORTED_ROOM_FUNCTIONS.map((fn) => `<option value="${fn}">${fn}</option>`).join('')}
-            </select>
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Intervention scope (1–4)</span>
-            <input name="scope" type="number" min="1" max="4" value="2" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
-          </label>
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Notes for the designer</span>
-            <textarea name="notes" rows="3" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" placeholder="Optional context"></textarea>
-          </label>
-          <button class="mt-2 self-start rounded-full bg-peach/90 px-5 py-2 text-sm font-medium text-plum hover:bg-peach" type="submit" ${this.state.loading ? 'disabled' : ''}>Run analysis</button>
-          ${this.state.warning ? `<p class="text-xs text-peach/80">${this.state.warning}</p>` : ''}
-        </form>
-      </div>
-    `;
-
-    const form = card.querySelector('#scopeForm');
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
-      }
-      const data = new FormData(form);
-      this.runAnalysis({
-        intendedUse: data.get('function'),
-        scope: Number.parseInt(data.get('scope'), 10) || 1,
-        notes: data.get('notes')?.toString() ?? '',
-      }).catch((error) => this.reportError(error));
-    });
-
-    return card;
-  }
-
-  renderAnalysisCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
-    card.innerHTML = `
-      <h2 class="text-lg font-semibold">3. Analysis progress</h2>
-      <p class="text-sm text-plum-muted">Gemini evaluates the room envelope, palette, and style fit. Strict JSON schema keeps the response predictable.</p>
-      ${this.state.loading && !this.state.analysis ? '<div class="animate-pulse text-plum-muted text-sm">Analyzing… (120s timeout)</div>' : ''}
-      ${this.state.error && !this.state.analysis ? `<p class="text-sm text-raspberry">${this.state.error}</p>` : ''}
-    `;
-    return card;
-  }
-
-  renderAnalysisResults() {
-    const { analysis } = this.state;
-    const paletteOptions = (this.state.paletteOptions ?? []).slice(0, 5);
+  renderSetupCard() {
     const card = document.createElement('section');
     card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-6';
+    const basePreview = this.state.basePhoto
+      ? `<div class="flex items-center gap-4"><img src="${this.state.basePhoto.dataUrl}" alt="Base room" class="h-24 w-36 rounded-xl2 object-cover border border-plum-border/40" /><div class="text-sm text-plum-muted">${this.state.basePhoto.fileName ?? 'Room photo'} · ${this.state.basePhoto.width}×${this.state.basePhoto.height}px</div></div>`
+      : '<p class="text-sm text-plum-muted">No base photo yet.</p>';
 
-    const paletteStatus = this.state.palette
-      ? '<span class="rounded-full bg-peach/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/80">Selected</span>'
-      : '<span class="rounded-full bg-plum-border/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Awaiting pick</span>';
+    const referencesMarkup = this.state.references
+      .map(
+        (ref, index) => `
+          <li class="flex items-center gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface px-3 py-2" draggable="true" data-reference-id="${ref.id}" data-index="${index}">
+            <img src="${ref.dataUrl}" alt="Reference ${index + 1}" class="h-16 w-16 rounded-xl2 object-cover border border-plum-border/40" />
+            <div class="flex-1">
+              <p class="text-sm">Reference ${index + 1}</p>
+              <p class="text-xs text-plum-muted">${ref.fileName ?? 'Image'} · ${ref.width}×${ref.height}px</p>
+            </div>
+            <div class="flex gap-2">
+              <button type="button" data-action="reference-up" class="rounded-full border border-plum-border/40 px-2 py-1 text-xs text-plum-muted">↑</button>
+              <button type="button" data-action="reference-down" class="rounded-full border border-plum-border/40 px-2 py-1 text-xs text-plum-muted">↓</button>
+              <button type="button" data-action="reference-remove" class="rounded-full border border-raspberry/50 px-2 py-1 text-xs text-raspberry">Remove</button>
+            </div>
+          </li>
+        `
+      )
+      .join('');
 
     card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">4. Room intelligence</h2>
-        <p class="text-sm text-plum-muted">Highlights from the analysis including inspiration pulse, palette exploration, and quick wins.</p>
-      </div>
-      <div class="grid gap-6 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-3">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">Inspiration pulse</h3>
-          <div class="flex flex-wrap gap-2">
-            ${analysis.usage_candidates.slice(0, 3).map((item) => `<span class="rounded-full bg-plum-surface-2 px-3 py-1 text-xs">${item.function} · ${(item.confidence * 100).toFixed(0)}%</span>`).join('')}
+      <header class="flex flex-col gap-2">
+        <h2 class="text-xl font-semibold">Project setup</h2>
+        <p class="text-sm text-plum-muted">Upload the base photo, optional purpose, and up to two style references. Order reflects weighting.</p>
+      </header>
+      <div class="flex flex-col gap-4">
+        <label class="flex flex-col gap-2 text-sm">
+          <span>Main target photo</span>
+          <input data-role="main-photo" type="file" accept="image/jpeg,image/png" capture="environment" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm" />
+        </label>
+        <div class="rounded-xl2 border border-plum-border/40 bg-plum-surface px-4 py-3">
+          ${basePreview}
+        </div>
+        <label class="flex flex-col gap-2 text-sm">
+          <span>Room purpose (optional)</span>
+          <input data-role="purpose" type="text" value="${escapeHtml(this.state.purpose)}" placeholder="e.g. Lounge with reading corner" class="rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 focus:outline-none focus:ring-2 focus:ring-peach/70" />
+        </label>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium">Reference images (max ${MAX_REFERENCES})</span>
+            <label class="text-xs text-peach underline cursor-pointer">
+              Add reference
+              <input data-role="reference-input" type="file" accept="image/jpeg,image/png" class="hidden" ${
+                this.state.references.length >= MAX_REFERENCES ? 'disabled' : ''
+              } />
+            </label>
           </div>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4 flex flex-col gap-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted">60-30-10 palette</h3>
-              <p class="text-xs text-plum-muted mt-1">Pick one of the suggested palettes to continue.</p>
-            </div>
-            ${paletteStatus}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2" id="paletteGrid"></div>
-          ${!this.state.palette ? '<p class="text-xs text-peach/80">Select a palette to unlock the 10-style gallery.</p>' : ''}
-        </section>
+          <ul class="flex flex-col gap-2" data-role="reference-list">
+            ${referencesMarkup || '<li class="text-sm text-plum-muted">No references yet.</li>'}
+          </ul>
+        </div>
       </div>
-      <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-        <ol class="space-y-3 text-sm text-plum-muted">
-          ${(this.state.analysis.quick_wins ?? []).map((win) => `<li><span class="text-plum-text font-medium">${win.title}</span> — ${win.description}${win.impact ? ` (<span class='text-peach'>Impact:</span> ${win.impact})` : ''}</li>`).join('')}
-        </ol>
-      </section>
     `;
 
-    const paletteGrid = card.querySelector('#paletteGrid');
-    if (paletteGrid) {
-      if (paletteOptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-plum-muted';
-        empty.textContent = 'No palette suggestions available. You can still proceed once a palette is selected later.';
-        paletteGrid.appendChild(empty);
-      } else {
-        paletteOptions.forEach((option, index) => {
-          paletteGrid.appendChild(this.renderPaletteOption(option, index));
-        });
+    const photoInput = card.querySelector('[data-role="main-photo"]');
+    photoInput.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (file) {
+        this.importBasePhoto(file);
+        event.target.value = '';
       }
-    }
+    });
+
+    const purposeInput = card.querySelector('[data-role="purpose"]');
+    purposeInput.addEventListener('change', (event) => {
+      this.state.purpose = event.target.value;
+      if (this.state.basePhoto) {
+        this.generateRoomBrief();
+      }
+    });
+
+    const referenceInput = card.querySelector('[data-role="reference-input"]');
+    referenceInput?.addEventListener('change', (event) => {
+      const files = Array.from(event.target.files ?? []);
+      if (files.length) {
+        this.importReferences(files.slice(0, MAX_REFERENCES - this.state.references.length));
+        event.target.value = '';
+      }
+    });
+
+    const list = card.querySelector('[data-role="reference-list"]');
+    list.querySelectorAll('li[data-reference-id]').forEach((item) => {
+      item.addEventListener('dragstart', (event) => {
+        event.dataTransfer.setData('text/plain', item.dataset.referenceId);
+      });
+      item.addEventListener('dragover', (event) => event.preventDefault());
+      item.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sourceId = event.dataTransfer.getData('text/plain');
+        const targetId = item.dataset.referenceId;
+        if (sourceId && targetId && sourceId !== targetId) {
+          this.reorderReferences(sourceId, targetId);
+        }
+      });
+      item.querySelectorAll('button[data-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const action = button.dataset.action;
+          const referenceId = item.dataset.referenceId;
+          if (action === 'reference-remove') {
+            this.removeReference(referenceId);
+          } else if (action === 'reference-up') {
+            this.shiftReference(referenceId, -1);
+          } else if (action === 'reference-down') {
+            this.shiftReference(referenceId, 1);
+          }
+        });
+      });
+    });
 
     return card;
   }
 
-  renderPaletteSwatch(label, info = {}) {
-    const hex = typeof info.hex === 'string' ? info.hex : '#2E1B2D';
-    const name = typeof info.name === 'string' && info.name.trim().length > 0 ? info.name : '—';
-    const finish = typeof info.finish === 'string' ? info.finish : '';
-    return `
-      <div class="flex flex-col gap-2 text-xs text-center">
-        <div class="rounded-xl2 border border-plum-border/40 overflow-hidden">
-          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="block w-full aspect-[4/3]" aria-hidden="true" focusable="false">
-            <rect width="100" height="100" fill="${hex}" />
-          </svg>
+  renderRoomBriefCard() {
+    const card = document.createElement('section');
+    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-3';
+    card.innerHTML = `
+      <header class="flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-xl font-semibold">Room brief</h2>
+          <p class="text-sm text-plum-muted">Silent Gemini summary that feeds each iteration prompt.</p>
         </div>
+        <div class="text-xs text-plum-muted">
+          ${this.state.roomBriefLoading ? '<span class="animate-pulse">Updating…</span>' : ''}
+        </div>
+      </header>
+    `;
+
+    if (this.state.roomBriefError) {
+      const error = document.createElement('p');
+      error.className = 'text-sm text-raspberry';
+      error.textContent = this.state.roomBriefError;
+      card.appendChild(error);
+      return card;
+    }
+
+    if (!this.state.roomBrief) {
+      const placeholder = document.createElement('p');
+      placeholder.className = 'text-sm text-plum-muted';
+      placeholder.textContent = 'Room brief will appear once the base photo is processed.';
+      card.appendChild(placeholder);
+      return card;
+    }
+
+    const brief = document.createElement('div');
+    brief.className = 'flex flex-col gap-3';
+    const paragraph = document.createElement('p');
+    paragraph.className = 'text-sm leading-relaxed';
+    paragraph.textContent = this.state.roomBrief.paragraph;
+    brief.appendChild(paragraph);
+
+    const list = document.createElement('ul');
+    list.className = 'list-disc pl-5 text-sm text-plum-muted';
+    for (const bullet of this.state.roomBrief.bullets) {
+      const li = document.createElement('li');
+      li.textContent = bullet;
+      list.appendChild(li);
+    }
+    brief.appendChild(list);
+    card.appendChild(brief);
+    return card;
+  }
+
+  renderFavoritesCard() {
+    const favorites = this.collectAllFavorites();
+    if (favorites.length === 0) return null;
+    const card = document.createElement('section');
+    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
+    card.innerHTML = `
+      <header>
+        <h2 class="text-xl font-semibold">Favorites</h2>
+        <p class="text-sm text-plum-muted">All favorited variants stay here for quick review.</p>
+      </header>
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        ${favorites
+          .map(
+            (entry) => `
+              <article class="rounded-xl2 border border-plum-border/40 bg-plum-surface p-3 flex gap-3">
+                <a href="${entry.imageUrl}" target="_blank" rel="noreferrer" class="flex-shrink-0">
+                  <img src="${entry.imageUrl}" alt="Favorite preview" class="h-20 w-32 rounded-xl2 object-cover border border-plum-border/40" />
+                </a>
+                <div class="flex flex-col gap-1 text-sm">
+                  <p class="font-medium">Iteration ${entry.round} · Tile ${entry.tileIndex + 1}</p>
+                  <p class="text-plum-muted line-clamp-3">${entry.descriptor}</p>
+                  ${entry.note ? `<p class="text-xs text-plum-muted">Note: ${entry.note}</p>` : ''}
+                </div>
+              </article>
+            `
+          )
+          .join('')}
+      </div>
+    `;
+    return card;
+  }
+
+  renderIterationsStack() {
+    if (this.state.iterations.length === 0) return null;
+    const container = document.createElement('section');
+    container.className = 'flex flex-col gap-4';
+
+    this.state.iterations.forEach((iteration, index) => {
+      const details = document.createElement('details');
+      details.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2';
+      if (index >= this.state.iterations.length - 2) {
+        details.open = true;
+      }
+      const summary = document.createElement('summary');
+      summary.className = 'cursor-pointer select-none px-6 py-4 flex items-center justify-between gap-3';
+      summary.innerHTML = `
         <div class="flex flex-col">
-          <span class="font-semibold text-plum-text">${label.toUpperCase()}</span>
-          <span>${name}</span>
-          <span>${hex}</span>
-          ${finish ? `<span>${finish}</span>` : ''}
+          <span class="text-sm uppercase tracking-[0.2em] text-plum-muted">Iteration</span>
+          <span class="text-lg font-semibold">Round ${iteration.round}</span>
+        </div>
+        <div class="text-sm text-plum-muted">${this.countFavorites(iteration)} favorites · Diversity deck anchored on ${iteration.deck[0]?.axis.label ?? 'axis'}</div>
+      `;
+      details.appendChild(summary);
+
+      const grid = document.createElement('div');
+      grid.className = 'grid gap-4 px-6 pb-6 pt-2 sm:grid-cols-2 lg:grid-cols-3';
+      iteration.tiles.forEach((tile) => {
+        grid.appendChild(this.renderTile(iteration, tile));
+      });
+      details.appendChild(grid);
+      container.appendChild(details);
+    });
+
+    return container;
+  }
+  renderTile(iteration, tile) {
+    const article = document.createElement('article');
+    article.className = 'flex flex-col gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4';
+    const image = document.createElement('a');
+    image.className = 'block aspect-[3/2] overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface-2';
+    image.href = tile.image?.url ?? '#';
+    image.target = '_blank';
+    image.rel = 'noreferrer';
+    if (tile.image?.url) {
+      const img = document.createElement('img');
+      img.src = tile.image.url;
+      img.alt = `Iteration ${iteration.round} variant ${tile.index + 1}`;
+      img.className = 'h-full w-full object-cover';
+      image.appendChild(img);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'flex h-full w-full items-center justify-center text-sm text-plum-muted';
+      placeholder.textContent = tile.status === 'running' ? 'Rendering…' : 'Pending';
+      image.appendChild(placeholder);
+    }
+    article.appendChild(image);
+
+    const meta = document.createElement('div');
+    meta.className = 'flex flex-col gap-1 text-sm';
+    meta.innerHTML = `
+      <p class="font-medium">Tile ${tile.index + 1} · ${tile.axis.label}</p>
+      <p class="text-xs text-plum-muted">${tile.axis.instruction}</p>
+    `;
+    article.appendChild(meta);
+
+    if (tile.status === 'error') {
+      const error = document.createElement('p');
+      error.className = 'text-sm text-raspberry';
+      error.textContent = tile.errorMessage ?? 'Generation failed.';
+      article.appendChild(error);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'flex flex-wrap gap-2';
+
+    const favoriteBtn = document.createElement('button');
+    favoriteBtn.type = 'button';
+    favoriteBtn.className = `rounded-full px-3 py-1 text-xs border transition ${
+      tile.favorite
+        ? 'bg-peach text-plum border-peach'
+        : 'border-plum-border/40 text-plum-muted hover:bg-plum-surface-2'
+    }`;
+    favoriteBtn.textContent = tile.favorite ? 'Favorited' : 'Mark favorite';
+    favoriteBtn.disabled = tile.status !== 'complete';
+    favoriteBtn.addEventListener('click', () => {
+      this.toggleFavorite(iteration.id, tile.id);
+    });
+    actions.appendChild(favoriteBtn);
+
+    if (tile.status === 'error') {
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'rounded-full border border-plum-border/40 px-3 py-1 text-xs text-plum-muted hover:bg-plum-surface-2';
+      retryBtn.textContent = 'Retry';
+      retryBtn.addEventListener('click', () => {
+        this.retryTile(iteration.id, tile.id);
+      });
+      actions.appendChild(retryBtn);
+    }
+
+    if (tile.status === 'complete') {
+      const finalizeBtn = document.createElement('button');
+      finalizeBtn.type = 'button';
+      finalizeBtn.className = 'rounded-full border border-plum-border/60 px-3 py-1 text-xs text-plum-muted hover:bg-plum-surface-2';
+      finalizeBtn.textContent = 'Use as final';
+      finalizeBtn.disabled = this.state.finalizing;
+      finalizeBtn.addEventListener('click', () => {
+        this.finalizeTile(iteration.id, tile.id);
+      });
+      actions.appendChild(finalizeBtn);
+    }
+
+    article.appendChild(actions);
+
+    const details = document.createElement('details');
+    details.className = 'rounded-xl2 border border-plum-border/30 bg-plum-surface-2 p-3 text-sm';
+    const summary = document.createElement('summary');
+    summary.className = 'cursor-pointer select-none text-sm font-medium';
+    summary.textContent = 'Details';
+    details.appendChild(summary);
+
+    const descriptor = document.createElement('p');
+    descriptor.className = 'mt-2 text-sm leading-relaxed text-plum-muted';
+    descriptor.textContent = tile.descriptor || (tile.status === 'complete' ? 'Descriptor missing.' : 'Descriptor pending.');
+    details.appendChild(descriptor);
+
+    const noteWrapper = document.createElement('label');
+    noteWrapper.className = 'mt-3 flex flex-col gap-2 text-xs text-plum-muted';
+    noteWrapper.innerHTML = '<span>Mini note (optional, feeds next prompt)</span>';
+    const textarea = document.createElement('textarea');
+    textarea.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-peach/70';
+    textarea.value = tile.note ?? '';
+    textarea.rows = 3;
+    textarea.disabled = !tile.favorite;
+    textarea.addEventListener('input', (event) => {
+      this.updateFavoriteNote(iteration.id, tile.id, event.target.value);
+    });
+    noteWrapper.appendChild(textarea);
+    details.appendChild(noteWrapper);
+
+    article.appendChild(details);
+    return article;
+  }
+
+  renderFinalCard() {
+    if (!this.state.finalRender) return null;
+    const card = document.createElement('section');
+    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-4';
+    card.innerHTML = `
+      <header>
+        <h2 class="text-xl font-semibold">Current final</h2>
+        <p class="text-sm text-plum-muted">High-res re-render with build notes.</p>
+      </header>
+      <div class="flex flex-col gap-4 md:flex-row md:gap-6">
+        <a href="${this.state.finalRender.image.url}" target="_blank" rel="noreferrer" class="flex-shrink-0 md:w-1/2">
+          <img src="${this.state.finalRender.image.url}" alt="Final render" class="w-full rounded-xl2 border border-plum-border/40 object-cover" />
+        </a>
+        <div class="flex-1 text-sm leading-relaxed">
+          <h3 class="font-medium text-plum-text mb-2">Build notes</h3>
+          <p class="text-plum-muted whitespace-pre-line">${this.state.finalRender.buildNotes}</p>
         </div>
       </div>
     `;
+    return card;
   }
 
-  renderPaletteOption(palette, index) {
-    const isSelected = this.state.selectedPaletteIndex === index;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `group flex flex-col gap-4 rounded-xl2 border px-4 py-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-peach/80 ${
-      isSelected ? 'border-peach/70 bg-peach/10 shadow-inner shadow-peach/20' : 'border-plum-border/30 bg-plum-surface hover:border-peach/60 hover:bg-plum-surface-2'
-    }`;
+  renderGenerateBar() {
+    if (!this.generateBarEl) return;
+    this.generateBarEl.innerHTML = '';
 
-    const statusBadge = isSelected
-      ? '<span class="rounded-full bg-peach/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-peach/90">Selected</span>'
-      : index === 0
-        ? '<span class="rounded-full bg-plum-border/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-plum-muted">Recommended</span>'
-        : '';
-
-    button.innerHTML = `
-      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-plum-muted">
-        <span>Palette ${index + 1}</span>
-        ${statusBadge}
-      </div>
-      <div class="grid grid-cols-3 gap-3">
-        ${['primary', 'secondary', 'accent'].map((key) => this.renderPaletteSwatch(key, palette?.[key] ?? {})).join('')}
-      </div>
-    `;
-
-    button.addEventListener('click', () => this.selectPalette(index));
-    return button;
-  }
-
-  selectPalette(index) {
-    const options = this.state.paletteOptions ?? [];
-    const palette = options[index];
-    if (!palette) {
+    if (!this.state.basePhoto || !this.state.roomBrief || this.state.roomBriefLoading) {
+      const placeholder = document.createElement('p');
+      placeholder.className = 'text-sm text-plum-muted';
+      placeholder.textContent = 'Upload the base photo and wait for the room brief to start iterating.';
+      this.generateBarEl.appendChild(placeholder);
       return;
     }
-    this.state.selectedPaletteIndex = index;
-    this.state.palette = palette;
-    if (this.state.analysis) {
-      const updatedAnalysis = {
-        ...this.state.analysis,
-        palette_60_30_10: palette,
-      };
-      updatedAnalysis.render_gallery = normalizeRenderGallery(updatedAnalysis, palette);
-      this.state.analysis = updatedAnalysis;
+
+    if (this.state.iterations.length === 0) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'rounded-full bg-peach px-5 py-2 text-sm font-medium text-plum hover:bg-peach/90 disabled:opacity-60';
+      button.textContent = this.state.generatingIteration ? 'Starting…' : 'Start generating first suggestions';
+      button.disabled = this.state.generatingIteration;
+      button.addEventListener('click', () => this.startIteration());
+      this.generateBarEl.appendChild(button);
+      return;
     }
-    this.render();
+
+    const lastIteration = this.state.iterations[this.state.iterations.length - 1];
+    const favoriteCount = this.countFavorites(lastIteration);
+    if (favoriteCount === 0) {
+      const hint = document.createElement('p');
+      hint.className = 'text-sm text-plum-muted';
+      hint.textContent = 'Select at least one favorite to unlock the next iteration.';
+      this.generateBarEl.appendChild(hint);
+      return;
+    }
+
+    const form = document.createElement('form');
+    form.className = 'flex w-full flex-col gap-3 md:flex-row md:items-center';
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      this.startIteration();
+    });
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = this.state.globalGuidance;
+    input.placeholder = 'Global guidance for the next iteration (optional)';
+    input.className = 'flex-1 rounded-xl2 border border-plum-border/60 bg-plum-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-peach/70';
+    input.addEventListener('input', (event) => {
+      this.state.globalGuidance = event.target.value;
+    });
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'rounded-full bg-peach px-5 py-2 text-sm font-medium text-plum hover:bg-peach/90 disabled:opacity-60';
+    submit.disabled = this.state.generatingIteration;
+    submit.textContent = this.state.generatingIteration ? 'Generating…' : 'Generate next iteration';
+
+    form.appendChild(input);
+    form.appendChild(submit);
+    this.generateBarEl.appendChild(form);
   }
 
-  renderGalleryCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    const gallery = this.state.gallery;
-    card.innerHTML = `
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold">5. 10-style gallery</h2>
-        <p class="text-sm text-plum-muted">Generate renders in parallel (pool=5). Tap to mark favorites for A/B exploration.</p>
-      </div>
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" id="galleryGrid"></div>
-      <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <button id="generateGallery" class="rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''}>Generate renders</button>
-        <div class="text-xs text-plum-muted">Favorites: ${this.state.favorites.size}/${MAX_FAVORITES}</div>
-      </div>
-    `;
-
-    const grid = card.querySelector('#galleryGrid');
-    const prompts = this.state.analysis.render_gallery;
-    const combined = prompts.map((prompt) => ({ prompt, render: gallery.find((item) => item.style === prompt.style) ?? null }));
-    combined
-      .sort((a, b) => this.findStyleScore(b.prompt.style) - this.findStyleScore(a.prompt.style))
-      .forEach(({ prompt, render }) => {
-        const tile = document.createElement('button');
-        tile.type = 'button';
-        tile.className = `group relative flex flex-col overflow-hidden rounded-xl2 border ${this.state.favorites.has(prompt.style) ? 'border-peach/80' : 'border-plum-border/30'} bg-plum-surface text-left transition`;
-        tile.dataset.style = prompt.style;
-        tile.innerHTML = `
-          <div class="relative aspect-[3/2] w-full overflow-hidden bg-plum-surface-2 flex items-center justify-center text-xs text-plum-muted">
-            ${render ? `<img src="${render.thumbUrl}" alt="${prompt.style} render" class="h-full w-full object-cover" loading="lazy" />` : 'Pending'}
-            <span class="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] uppercase tracking-wide">${prompt.style}</span>
-          </div>
-          <div class="flex flex-col gap-1 p-3 text-xs">
-            <p class="text-plum-text font-medium">${prompt.focus}</p>
-            <p class="line-clamp-3 text-plum-muted">${prompt.guidance}</p>
-          </div>
-        `;
-        tile.addEventListener('click', () => this.toggleFavorite(prompt.style));
-        grid.appendChild(tile);
-      });
-
-    card.querySelector('#generateGallery').addEventListener('click', () => {
-      if (!this.state.apiKey) {
-        this.settingsModal.showModal();
-        return;
+  renderFinalCompareDialog() {
+    if (!this.finalModal || !this.finalModalContent) return;
+    if (!this.state.finalCandidate) {
+      this.finalModalContent.innerHTML = '';
+      if (this.finalModal.open) {
+        this.finalModal.close();
       }
-      this.generateGalleryRenders().catch((error) => this.reportError(error));
-    });
-
-    if (this.state.favorites.size > 0) {
-      const confirm = document.createElement('div');
-      confirm.className = 'flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-plum-border/40 bg-plum-surface p-4 text-sm';
-      confirm.innerHTML = `
-        <div>Generate A/B mini-variants for ${this.state.favorites.size} favorite styles.</div>
-        <button class="rounded-full bg-coral/90 px-4 py-2 text-plum font-medium hover:bg-coral" ${this.state.loading ? 'disabled' : ''}>Launch A/B (${this.state.favorites.size * 2} images)</button>
-      `;
-      confirm.querySelector('button').addEventListener('click', () => this.generateABVariants());
-      card.appendChild(confirm);
+      return;
     }
 
-    return card;
-  }
-
-  renderABCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">6. A/B mini-variants</h2>
-        <p class="text-sm text-plum-muted">Smart Mixed axes provide controlled variation for each favorite style.</p>
-      </div>
-      <div class="grid gap-4 md:grid-cols-3" id="abGrid"></div>
-      <button class="self-end rounded-full bg-peach/90 px-4 py-2 text-plum font-medium hover:bg-peach" ${this.state.loading ? 'disabled' : ''} id="generateHeroes">Generate 3 hero renders</button>
-    `;
-
-    const grid = card.querySelector('#abGrid');
-    this.state.abVariants.forEach((variant) => {
-      const tile = document.createElement('article');
-      tile.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface overflow-hidden flex flex-col';
-      tile.innerHTML = `
-        <div class="relative aspect-[3/2] bg-plum-surface-2">
-          ${variant.thumbUrl ? `<img src="${variant.thumbUrl}" alt="${variant.style} variant" class="h-full w-full object-cover" loading="lazy" />` : '<div class="flex h-full items-center justify-center text-xs text-plum-muted">Pending</div>'}
-        </div>
-        <div class="p-4 text-xs">
-          <div class="font-semibold text-plum-text">${variant.style} · ${variant.variant}</div>
-          <div class="text-plum-muted">${variant.focus}</div>
-        </div>
-      `;
-      grid.appendChild(tile);
-    });
-
-    card.querySelector('#generateHeroes').addEventListener('click', () => this.generateHeroRenders());
-    return card;
-  }
-
-  renderHeroCard() {
-    const card = document.createElement('section');
-    card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">7. Hero renders</h2>
-        <p class="text-sm text-plum-muted">Three flagship Smart Mixed renders at 1536×1024. Tap to open full size in a new tab.</p>
-      </div>
-      <div class="grid gap-4 lg:grid-cols-3" id="heroGrid"></div>
-    `;
-
-    const grid = card.querySelector('#heroGrid');
-    this.state.heroRenders.forEach((render) => {
-      const tile = document.createElement('a');
-      tile.href = render.fullUrl;
-      tile.target = '_blank';
-      tile.rel = 'noopener';
-      tile.className = 'group relative block overflow-hidden rounded-xl2 border border-plum-border/40 bg-plum-surface';
-      tile.innerHTML = `
-        <img src="${render.thumbUrl}" alt="Hero render" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy" />
-        <span class="absolute bottom-3 right-3 rounded-full bg-black/50 px-3 py-1 text-[10px] uppercase tracking-wide">${render.variant}</span>
-      `;
-      grid.appendChild(tile);
-    });
-
-    return card;
-  }
-
-  renderInsightsCard() {
-  const card = document.createElement('section');
-  card.className = 'rounded-xl2 border border-plum-border/40 bg-plum-surface-2 p-6 flex flex-col gap-5';
-  const quickWins = Array.isArray(this.state.quickWins) ? this.state.quickWins : [];
-  const list = Array.isArray(this.state.miniList) ? this.state.miniList : [];
-    card.innerHTML = `
-      <div>
-        <h2 class="text-lg font-semibold">8. Quick wins & mini shopping list</h2>
-        <p class="text-sm text-plum-muted">Actionable instructions with neutral specifications only.</p>
-      </div>
+    const candidate = this.state.finalCandidate;
+    const currentFinal = this.state.finalRender;
+    this.finalModalContent.innerHTML = `
+      <header>
+        <h2 class="text-xl font-semibold">Compare & decide</h2>
+        <p class="text-sm text-plum-muted">Review the new hi-res candidate next to the current final.</p>
+      </header>
       <div class="grid gap-4 md:grid-cols-2">
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Top 5 quick wins</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${quickWins.map((item) => `<li><span class="text-plum-text font-medium">${item.title}</span> — ${item.description}</li>`).join('')}
-          </ol>
-        </section>
-        <section class="rounded-xl2 border border-plum-border/30 bg-plum-surface p-4">
-          <h3 class="text-sm font-semibold uppercase tracking-wide text-plum-muted mb-3">Mini shopping list</h3>
-          <ol class="space-y-3 text-sm text-plum-muted">
-            ${list.length > 0
-              ? list
-                  .map(
-                    (item) =>
-                      `<li><span class="text-plum-text font-medium">${item.name}</span> — ${item.spec}</li>`
-                  )
-                  .join('')
-              : '<li class="text-xs text-plum-muted/70">No items yet—generate hero renders to unlock shopping ideas.</li>'}
-          </ol>
-        </section>
+        <div class="flex flex-col gap-3">
+          <h3 class="text-sm font-medium">Current final</h3>
+          ${currentFinal
+            ? `<img src="${currentFinal.image.url}" alt="Current final" class="w-full rounded-xl2 border border-plum-border/40" />
+               <p class="text-xs text-plum-muted whitespace-pre-line">${currentFinal.buildNotes}</p>`
+            : '<p class="text-sm text-plum-muted">No final selected yet.</p>'}
+        </div>
+        <div class="flex flex-col gap-3">
+          <h3 class="text-sm font-medium">New candidate</h3>
+          <img src="${candidate.image.url}" alt="Candidate" class="w-full rounded-xl2 border border-plum-border/40" />
+          <p class="text-xs text-plum-muted whitespace-pre-line">${candidate.buildNotes}</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3">
+        <button type="button" data-action="keep" class="rounded-full border border-plum-border/60 px-4 py-2 text-sm text-plum-muted hover:bg-plum-surface">Keep current</button>
+        <button type="button" data-action="replace" class="rounded-full bg-peach px-4 py-2 text-sm font-medium text-plum hover:bg-peach/90">Replace with candidate</button>
       </div>
     `;
-    return card;
-  }
 
-  async importPhoto(file) {
-    this.state.loading = true;
-    this.render();
-    const normalized = await normalizeImageFile(file);
-    const base64 = await blobToBase64(normalized.original);
-    const thumbUrl = URL.createObjectURL(normalized.thumb);
-    const fullUrl = URL.createObjectURL(normalized.original);
-    const projectId = this.state.project.id;
-
-    const originalRecord = await saveMedia(projectId, {
-      kind: 'input',
-      blob: normalized.original,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.original.size,
+    this.finalModalContent.querySelector('[data-action="keep"]').addEventListener('click', () => {
+      this.state.finalCandidate = null;
+      this.renderFinalCompareDialog();
     });
 
-    await saveMedia(projectId, {
-      kind: 'thumb',
-      relatedId: originalRecord.id,
-      blob: normalized.thumb,
-      mime: file.type,
-      width: normalized.width,
-      height: normalized.height,
-      bytes: normalized.thumb.size,
+    this.finalModalContent.querySelector('[data-action="replace"]').addEventListener('click', () => {
+      if (this.state.finalCandidate) {
+        this.state.finalRender = {
+          image: this.state.finalCandidate.image,
+          buildNotes: this.state.finalCandidate.buildNotes,
+          source: this.state.finalCandidate.source,
+        };
+        this.state.finalCandidate = null;
+        void this.persistFinalRender();
+        this.render();
+      }
     });
 
-    await appendEvent(projectId, {
-      type: 'upload_image',
-      payload: { mediaId: originalRecord.id, name: file.name },
-    });
-
-    this.state.photo = {
-      base64,
-      thumbUrl,
-      fullUrl,
-      width: normalized.width,
-      height: normalized.height,
-      fileName: file.name,
-    };
-    this.resetAfter('analysis');
-    this.state.loading = false;
-    this.render();
-  }
-
-  resetAfter(step) {
-    if (step === 'photo') {
-      this.state.photo = null;
+    if (!this.finalModal.open) {
+      this.finalModal.showModal();
     }
-    this.state.analysis = null;
-    this.state.gallery = [];
-    this.state.favorites = new Set();
-    this.state.abVariants = [];
-    this.state.heroRenders = [];
-    this.state.quickWins = null;
-    this.state.miniList = null;
-    this.state.palette = null;
-    this.state.paletteOptions = [];
-    this.state.selectedPaletteIndex = null;
-    this.render();
   }
-
-  async runAnalysis({ intendedUse, scope, notes }) {
-    this.state.loading = true;
-    this.state.error = null;
-    this.render();
+  async importBasePhoto(file) {
     try {
-      const prompt = buildAnalysisPrompt({ intendedUse, scope, notes });
-      const controller = new AbortController();
-      this.controller = controller;
-      const data = await this.client.analyzeRoom({
-        imageBase64: this.state.photo.base64,
-        prompt,
-        signal: controller.signal,
-      });
-      const normalizedAnalysis = { ...data };
-  const paletteOptions = ensurePaletteOptions(normalizedAnalysis);
-      const defaultPalette = paletteOptions[0] ?? normalizedAnalysis.palette_60_30_10 ?? null;
-      if (defaultPalette) {
-        normalizedAnalysis.palette_60_30_10 = defaultPalette;
+      const normalized = await normalizeImageFile(file);
+      const base64 = await blobToBase64(normalized.original);
+      const dataUrl = await blobToDataUrl(normalized.original);
+      const projectId = this.state.project?.id;
+      if (projectId) {
+        const originalRecord = await saveMedia(projectId, {
+          kind: 'input',
+          blob: normalized.original,
+          mime: file.type || 'image/jpeg',
+          width: normalized.width,
+          height: normalized.height,
+          bytes: normalized.original.size,
+        });
+        await saveMedia(projectId, {
+          kind: 'thumb',
+          relatedId: originalRecord.id,
+          blob: normalized.thumb,
+          mime: file.type || 'image/jpeg',
+          width: normalized.width,
+          height: normalized.height,
+          bytes: normalized.thumb.size,
+        });
+        await appendEvent(projectId, {
+          type: 'upload_image',
+          payload: { mediaId: originalRecord.id, name: file.name },
+        });
       }
-      normalizedAnalysis.palette_options = paletteOptions;
-      normalizedAnalysis.render_gallery = normalizeRenderGallery(normalizedAnalysis, defaultPalette);
-      await saveArtifact(this.state.project.id, {
-        kind: 'analysis',
-        json: normalizedAnalysis,
-      });
-      await appendEvent(this.state.project.id, {
-        type: 'analysis_done',
-        payload: { intendedUse, scope },
-      });
-      this.state.analysis = normalizedAnalysis;
-      this.state.quickWins = normalizedAnalysis.quick_wins;
-      this.state.paletteOptions = paletteOptions;
-      this.state.palette = null;
-      this.state.selectedPaletteIndex = null;
-      this.state.warning = evaluateScaleConfidence(normalizedAnalysis.constraints?.scale_guesses);
+
+      this.state.basePhoto = {
+        id: randomId(),
+        dataUrl,
+        base64,
+        width: normalized.width,
+        height: normalized.height,
+        mime: file.type || 'image/jpeg',
+        fileName: file.name,
+      };
+      this.resetGeneratedState();
+      this.render();
+      await this.generateRoomBrief();
     } catch (error) {
-      if (error.code === 'missing-key') {
-        this.settingsModal.showModal();
-      }
-      this.reportError(error);
-    } finally {
-      this.state.loading = false;
+      this.state.bannerError = error.message ?? 'Failed to import base photo.';
       this.render();
     }
   }
 
-  async generateGalleryRenders() {
-    this.state.loading = true;
-    this.render();
-    const analysis = this.state.analysis;
-    const poolSize = 5;
-    const tasks = analysis.render_gallery.map((item) => async () => {
-      const assets = await this.renderAndStore({
-        prompt: item.prompt,
-        relatedId: item.style,
-      });
-      const entry = {
-        style: item.style,
-        prompt: item.prompt,
-        focus: item.focus,
-        thumbUrl: assets.thumbUrl,
-        fullUrl: assets.fullUrl,
-      };
-      return entry;
-    });
-
-    const results = [];
-    const queue = tasks.slice();
-    const workers = Array.from({ length: poolSize }, async () => {
-      while (queue.length > 0) {
-        const job = queue.shift();
-        try {
-          const result = await job();
-          results.push(result);
-          this.state.gallery = [...results];
-          this.render();
-        } catch (error) {
-          console.error('Render failed', error);
-        }
-      }
-    });
-
-    await Promise.all(workers);
-    await appendEvent(this.state.project.id, {
-      type: 'gallery_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  async generateABVariants() {
-    if (this.state.favorites.size === 0) return;
-    this.state.loading = true;
-    this.render();
-    const variants = [];
-    const axes = this.state.analysis.smart_mixed_axes;
-    for (const style of this.state.favorites) {
-      const basePrompt = this.state.analysis.render_gallery.find((item) => item.style === style);
-      if (!basePrompt) continue;
-      const prompts = buildABPrompts(basePrompt.prompt, axes);
-      for (let index = 0; index < prompts.length; index += 1) {
-        try {
-          const assets = await this.renderAndStore({
-            prompt: prompts[index],
-            relatedId: `${style}-${index}`,
-          });
-          variants.push({
-            style,
-            variant: index === 0 ? axes.axisA.label : axes.axisB.label,
-            focus: index === 0 ? axes.axisA.description : axes.axisB.description,
-            thumbUrl: assets.thumbUrl,
-            fullUrl: assets.fullUrl,
-          });
-        } catch (error) {
-          console.error('Variant render failed', error);
-        }
-      }
-    }
-    this.state.abVariants = variants;
-    await appendEvent(this.state.project.id, {
-      type: 'ab_generated',
-      payload: { count: variants.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  async generateHeroRenders() {
-    this.state.loading = true;
-    this.render();
-    const axes = this.state.analysis.smart_mixed_axes;
-    const basePrompt = this.state.analysis.render_gallery[0].prompt;
-    const prompts = buildHeroPrompts(basePrompt, axes);
-    const results = [];
-    for (let index = 0; index < prompts.length; index += 1) {
+  async importReferences(files) {
+    for (const file of files) {
+      if (this.state.references.length >= MAX_REFERENCES) break;
       try {
-        const assets = await this.renderAndStore({
-          prompt: prompts[index],
-          relatedId: `hero-${index}`,
-        });
-        results.push({
-          variant: index === 0 ? 'Axis A' : index === 1 ? 'Axis B' : 'Blend',
-          thumbUrl: assets.thumbUrl,
-          fullUrl: assets.fullUrl,
-        });
+        const normalized = await normalizeImageFile(file);
+        const base64 = await blobToBase64(normalized.original);
+        const dataUrl = await blobToDataUrl(normalized.original);
+        const reference = {
+          id: randomId(),
+          dataUrl,
+          base64,
+          width: normalized.width,
+          height: normalized.height,
+          mime: file.type || 'image/jpeg',
+          fileName: file.name,
+        };
+        this.state.references.push(reference);
+
+        const projectId = this.state.project?.id;
+        if (projectId) {
+          await saveMedia(projectId, {
+            kind: 'reference',
+            blob: normalized.original,
+            mime: reference.mime,
+            width: reference.width,
+            height: reference.height,
+            bytes: normalized.original.size,
+          });
+          await appendEvent(projectId, {
+            type: 'reference_added',
+            payload: { name: file.name },
+          });
+        }
       } catch (error) {
-        console.error('Hero render failed', error);
+        this.state.bannerError = error.message ?? 'Failed to import reference.';
       }
-    }
-    this.state.heroRenders = results;
-    this.state.quickWins = this.state.analysis.quick_wins;
-    this.state.miniList = buildMiniList(this.state.analysis);
-    await appendEvent(this.state.project.id, {
-      type: 'hero_generated',
-      payload: { count: results.length },
-    });
-    this.state.loading = false;
-    this.render();
-  }
-
-  toggleFavorite(style) {
-    if (this.state.favorites.has(style)) {
-      this.state.favorites.delete(style);
-    } else {
-      if (this.state.favorites.size >= MAX_FAVORITES) {
-        return;
-      }
-      this.state.favorites.add(style);
     }
     this.render();
   }
 
-  async persistRenderAssets({ blob, thumb, relatedId }) {
-    const renderRecord = await saveMedia(this.state.project.id, {
-      kind: 'render',
-      relatedId,
-      blob,
-      mime: blob.type,
-      bytes: blob.size,
-    });
-    await saveMedia(this.state.project.id, {
-      kind: 'thumb',
-      relatedId: renderRecord.id,
-      blob: thumb,
-      mime: 'image/jpeg',
-      bytes: thumb.size,
-    });
-    return renderRecord;
+  reorderReferences(sourceId, targetId) {
+    const sourceIndex = this.state.references.findIndex((ref) => ref.id === sourceId);
+    const targetIndex = this.state.references.findIndex((ref) => ref.id === targetId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+    const [moved] = this.state.references.splice(sourceIndex, 1);
+    this.state.references.splice(targetIndex, 0, moved);
+    this.render();
   }
 
-  async renderAndStore({ prompt, relatedId }) {
-    const [result] = await this.client.generateRenders({
-      prompt,
-      imageBase64: this.state.photo.base64,
-    });
-    const blob = base64ToBlob(result.data, result.mimeType);
-    const thumb = await createThumb(blob);
-    await this.persistRenderAssets({ blob, thumb, relatedId });
-    return {
-      fullUrl: URL.createObjectURL(blob),
-      thumbUrl: URL.createObjectURL(thumb),
+  shiftReference(referenceId, delta) {
+    const index = this.state.references.findIndex((ref) => ref.id === referenceId);
+    if (index === -1) return;
+    const nextIndex = index + delta;
+    if (nextIndex < 0 || nextIndex >= this.state.references.length) return;
+    const [moved] = this.state.references.splice(index, 1);
+    this.state.references.splice(nextIndex, 0, moved);
+    this.render();
+  }
+
+  removeReference(referenceId) {
+    const index = this.state.references.findIndex((ref) => ref.id === referenceId);
+    if (index === -1) return;
+    this.state.references.splice(index, 1);
+    this.render();
+  }
+
+  async generateRoomBrief() {
+    if (!this.state.basePhoto) return;
+    const requestId = randomId();
+    this.state.roomBriefLoading = true;
+    this.state.roomBriefError = null;
+    this.state.roomBriefRequestId = requestId;
+    this.render();
+
+    try {
+      const prompt = buildRoomBriefPrompt({ purpose: this.state.purpose });
+      const parts = [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: this.state.basePhoto.mime,
+            data: this.state.basePhoto.base64,
+          },
+        },
+      ];
+      const response = await this.client.callFlash({ parts });
+      const candidate = response.candidates?.[0];
+      const textPart = candidate?.content?.parts?.find((part) => typeof part.text === 'string' && part.text.trim());
+      const parsed = parseRoomBrief(textPart?.text ?? '');
+      if (!parsed.paragraph || parsed.bullets.length === 0) {
+        throw new Error('Room brief response missing content.');
+      }
+
+      if (this.state.roomBriefRequestId === requestId) {
+        this.state.roomBrief = parsed;
+        this.state.roomBriefError = null;
+        const projectId = this.state.project?.id;
+        if (projectId) {
+          await saveArtifact(projectId, {
+            kind: 'roomBrief',
+            json: parsed,
+          });
+          await appendEvent(projectId, {
+            type: 'room_brief_generated',
+          });
+        }
+      }
+    } catch (error) {
+      if (error.code === 'missing-key') {
+        this.settingsModal?.showModal();
+      }
+      if (this.state.roomBriefRequestId === requestId) {
+        this.state.roomBriefError = error.message ?? 'Failed to generate room brief.';
+      }
+    } finally {
+      if (this.state.roomBriefRequestId === requestId) {
+        this.state.roomBriefLoading = false;
+        this.render();
+      }
+    }
+  }
+
+  collectAllFavorites() {
+    const favorites = [];
+    for (const iteration of this.state.iterations) {
+      for (const tile of iteration.tiles) {
+        if (tile.favorite && tile.status === 'complete' && tile.image?.url) {
+          favorites.push({
+            round: iteration.round,
+            tileIndex: tile.index,
+            descriptor: tile.descriptor,
+            note: tile.note,
+            imageUrl: tile.image.url,
+          });
+        }
+      }
+    }
+    return favorites;
+  }
+
+  countFavorites(iteration) {
+    return iteration.tiles.filter((tile) => tile.favorite).length;
+  }
+
+  getFavoritesForNextRound() {
+    if (this.state.iterations.length === 0) return [];
+    const lastIteration = this.state.iterations[this.state.iterations.length - 1];
+    return lastIteration.tiles
+      .filter((tile) => tile.favorite && tile.status === 'complete')
+      .map((tile) => ({ descriptor: tile.descriptor, note: tile.note }));
+  }
+
+  resetGeneratedState() {
+    this.state.iterations = [];
+    this.state.finalRender = null;
+    this.state.finalCandidate = null;
+    this.state.bannerError = null;
+  }
+
+  async startIteration() {
+    if (!this.state.basePhoto || !this.state.roomBrief || this.state.generatingIteration) {
+      return;
+    }
+
+    const favorites = this.getFavoritesForNextRound();
+    if (this.state.iterations.length > 0 && favorites.length === 0) {
+      this.state.bannerError = 'Select at least one favorite to continue.';
+      this.render();
+      return;
+    }
+
+    const deck = buildDiversityDeck(ITERATION_TILE_COUNT, this.state.iterations.length * 2);
+    const iteration = {
+      id: randomId(),
+      round: this.state.iterations.length + 1,
+      deck,
+      tiles: deck.map((entry, index) => ({
+        id: randomId(),
+        index,
+        axis: entry.axis,
+        status: 'pending',
+        descriptor: '',
+        note: '',
+        favorite: false,
+        image: null,
+        errorMessage: null,
+      })),
+      guidance: this.state.globalGuidance,
+      contextFavorites: favorites,
+      references: this.state.references.map((ref) => ({ base64: ref.base64, mime: ref.mime })),
     };
+
+    this.state.iterations.push(iteration);
+    this.state.generatingIteration = true;
+    this.render();
+
+    try {
+      await runLimitedPool({
+        count: iteration.tiles.length,
+        limit: ITERATION_POOL_SIZE,
+        worker: (index) => this.generateTile(iteration, iteration.tiles[index]),
+      });
+      const projectId = this.state.project?.id;
+      if (projectId) {
+        const success = iteration.tiles.filter((tile) => tile.status === 'complete').length;
+        const failed = iteration.tiles.filter((tile) => tile.status === 'error').length;
+        await appendEvent(projectId, {
+          type: 'iteration_complete',
+          payload: { round: iteration.round, success, failed },
+        });
+      }
+    } finally {
+      this.state.generatingIteration = false;
+      this.render();
+    }
   }
 
-  findStyleScore(style) {
-    return (
-      this.state.analysis?.styles_top10.find((item) => item.style === style)?.score ?? 0
-    );
+  async generateTile(iteration, tile) {
+    tile.status = 'running';
+    tile.errorMessage = null;
+    this.render();
+
+    try {
+      const prompt = buildIterationPrompt({
+        roomBrief: this.state.roomBrief,
+        purpose: this.state.purpose,
+        globalGuidance: iteration.guidance,
+        favorites: iteration.contextFavorites,
+        axis: tile.axis,
+      });
+      const parts = [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: this.state.basePhoto.mime,
+            data: this.state.basePhoto.base64,
+          },
+        },
+        ...iteration.references.map((ref) => ({
+          inlineData: {
+            mimeType: ref.mime,
+            data: ref.base64,
+          },
+        })),
+      ];
+      const response = await this.client.callFlashImage({ parts });
+      const parsed = parseFlashImageResponse(response);
+      let descriptor = parsed.text;
+      if (!descriptor) {
+        const repair = await this.client.callFlash({
+          parts: [
+            {
+              text: buildDescriptorRepairPrompt({
+                roomBrief: this.state.roomBrief,
+                purpose: this.state.purpose,
+                favorites: iteration.contextFavorites,
+                globalGuidance: iteration.guidance,
+                axis: tile.axis,
+              }),
+            },
+          ],
+        });
+        const repairText = repair.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text;
+        descriptor = repairText?.trim() ?? '';
+      }
+
+      const blob = base64ToBlob(parsed.image.data, parsed.image.mimeType);
+      const dataUrl = await blobToDataUrl(blob);
+      tile.image = {
+        base64: parsed.image.data,
+        url: dataUrl,
+        mime: parsed.image.mimeType,
+      };
+      tile.descriptor = descriptor;
+      tile.status = 'complete';
+
+      const projectId = this.state.project?.id;
+      if (projectId) {
+        const renderRecord = await saveMedia(projectId, {
+          kind: 'render',
+          blob,
+          mime: parsed.image.mimeType,
+          bytes: blob.size,
+        });
+        await saveArtifact(projectId, {
+          kind: 'descriptor',
+          json: {
+            tileId: tile.id,
+            descriptor,
+          },
+        });
+        await appendEvent(projectId, {
+          type: 'tile_generated',
+          payload: { iteration: iteration.round, tile: tile.index + 1, mediaId: renderRecord.id },
+        });
+      }
+    } catch (error) {
+      tile.status = 'error';
+      tile.errorMessage = error.message ?? 'Generation failed.';
+    } finally {
+      this.render();
+    }
   }
 
-  reportError(error) {
-    console.error(error);
-    this.state.error = error.message ?? 'Unexpected error';
-    this.state.loading = false;
+  async retryTile(iterationId, tileId) {
+    if (this.state.generatingIteration) return;
+    const iteration = this.state.iterations.find((item) => item.id === iterationId);
+    const tile = iteration?.tiles.find((item) => item.id === tileId);
+    if (!iteration || !tile) return;
+
+    this.state.generatingIteration = true;
+    this.render();
+    try {
+      await this.generateTile(iteration, tile);
+    } finally {
+      this.state.generatingIteration = false;
+      this.render();
+    }
+  }
+
+  toggleFavorite(iterationId, tileId) {
+    const iteration = this.state.iterations.find((item) => item.id === iterationId);
+    const tile = iteration?.tiles.find((item) => item.id === tileId);
+    if (!tile || tile.status !== 'complete') return;
+    tile.favorite = !tile.favorite;
+    if (!tile.favorite) {
+      tile.note = '';
+    }
+    this.render();
+  }
+
+  updateFavoriteNote(iterationId, tileId, value) {
+    const iteration = this.state.iterations.find((item) => item.id === iterationId);
+    const tile = iteration?.tiles.find((item) => item.id === tileId);
+    if (!tile) return;
+    tile.note = value;
+  }
+  async finalizeTile(iterationId, tileId) {
+    if (this.state.finalizing) return;
+    const iteration = this.state.iterations.find((item) => item.id === iterationId);
+    const tile = iteration?.tiles.find((item) => item.id === tileId);
+    if (!iteration || !tile || tile.status !== 'complete' || !tile.image) return;
+
+    this.state.finalizing = true;
+    this.render();
+
+    try {
+      const favorites = this.collectAllFavorites().map((entry) => ({ descriptor: entry.descriptor, note: entry.note }));
+      const prompt = buildFinalizationPrompt({
+        roomBrief: this.state.roomBrief,
+        purpose: this.state.purpose,
+        favorites,
+      });
+      const parts = [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: this.state.basePhoto.mime,
+            data: this.state.basePhoto.base64,
+          },
+        },
+        {
+          inlineData: {
+            mimeType: tile.image.mime,
+            data: tile.image.base64,
+          },
+        },
+        ...this.state.references.map((ref) => ({
+          inlineData: {
+            mimeType: ref.mime,
+            data: ref.base64,
+          },
+        })),
+      ];
+      const response = await this.client.callFlashImage({ parts });
+      const parsed = parseFlashImageResponse(response);
+      let buildNotes = parsed.text;
+      if (!buildNotes) {
+        const repair = await this.client.callFlash({
+          parts: [
+            { text: buildFinalizationRepairPrompt({ roomBrief: this.state.roomBrief, purpose: this.state.purpose, favorites }) },
+          ],
+        });
+        buildNotes = repair.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text ?? '';
+      }
+
+      const blob = base64ToBlob(parsed.image.data, parsed.image.mimeType);
+      const dataUrl = await blobToDataUrl(blob);
+      this.state.finalCandidate = {
+        image: {
+          base64: parsed.image.data,
+          url: dataUrl,
+          mime: parsed.image.mimeType,
+          blob,
+        },
+        buildNotes,
+        source: { iterationId, tileId },
+      };
+      if (this.state.project?.id) {
+        await appendEvent(this.state.project.id, {
+          type: 'final_candidate_ready',
+          payload: { iteration: iteration.round, tile: tile.index + 1 },
+        });
+      }
+    } catch (error) {
+      this.state.bannerError = error.message ?? 'Failed to finalize the render.';
+    } finally {
+      this.state.finalizing = false;
+      this.renderFinalCompareDialog();
+      this.render();
+    }
+  }
+
+  async persistFinalRender() {
+    if (!this.state.finalRender || !this.state.project?.id) return;
+    const { image, buildNotes } = this.state.finalRender;
+    await saveMedia(this.state.project.id, {
+      kind: 'final',
+      blob: image.blob,
+      mime: image.mime,
+      bytes: image.blob.size,
+    });
+    await saveArtifact(this.state.project.id, {
+      kind: 'finalNotes',
+      json: { buildNotes },
+    });
+    await appendEvent(this.state.project.id, {
+      type: 'final_selected',
+    });
+  }
+
+  performRestart() {
+    this.state.iterations = [];
+    this.state.finalRender = null;
+    this.state.finalCandidate = null;
+    this.state.bannerError = null;
     this.render();
   }
 }
 
-async function createThumb(blob) {
-  const canvas = document.createElement('canvas');
-  const img = document.createElement('img');
-  img.src = await blobToDataUrl(blob);
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-  });
-  const scale = Math.min(384 / img.naturalWidth, 384 / img.naturalHeight, 1);
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) {
-        resolve(result);
-      } else {
-        reject(new Error('Unable to create thumbnail'));
-      }
-    }, 'image/jpeg', 0.85);
+function escapeHtml(value) {
+  return value.replace(/[&<>"]+/g, (match) => {
+    switch (match) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return match;
+    }
   });
 }
 
-function evaluateScaleConfidence(guesses) {
-  if (!guesses) return null;
-  const confidences = [guesses.width_m, guesses.depth_m, guesses.height_m]
-    .map((item) => item?.confidence)
-    .filter((value) => typeof value === 'number');
-  if (confidences.length === 0) return null;
-  const min = Math.min(...confidences);
-  if (Number.isFinite(min) && min < 0.4) {
-    return 'Scale confidence is low; measurements may need manual verification.';
+function randomId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
   }
-  return null;
+  return Math.random().toString(36).slice(2, 10);
 }
-
