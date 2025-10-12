@@ -145,7 +145,10 @@ describe('normalizeRenderGallery', () => {
     expect(artDeco.prompt).toContain('Art-Deco');
     expect(artDeco.guidance).toContain('Preserve existing architecture');
     expect(artDeco.guidance).toContain('Room structure is fixed');
-    expect(artDeco.prompt).toContain('Do not relocate walls');
+    expect(artDeco.guidance).toContain(
+      'Doors, windows, and room entries stay exactly where they are'
+    );
+    expect(artDeco.prompt).toContain('entryways');
   });
 
   test('trims existing text values and falls back when empty', () => {
@@ -171,6 +174,9 @@ describe('normalizeRenderGallery', () => {
     expect(rustic.focus).toBe('Rustic concept direction');
     expect(rustic.guidance).toContain('Preserve existing architecture');
     expect(rustic.guidance).toContain('Room structure is fixed');
+    expect(rustic.guidance).toContain(
+      'Doors, windows, and room entries stay exactly where they are'
+    );
   });
 
   test('handles missing palette and limitations gracefully', () => {
@@ -215,6 +221,9 @@ describe('normalizeRenderGallery', () => {
     expect(boho.focus).toBe('Existing focus');
     expect(boho.guidance).toContain('Preserve existing architecture');
     expect(boho.guidance).toContain('Room structure is fixed');
+    expect(boho.guidance).toContain(
+      'Doors, windows, and room entries stay exactly where they are'
+    );
   });
 
   test('describes palette even when swatches are partial', () => {

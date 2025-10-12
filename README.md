@@ -168,7 +168,7 @@ Use the version shared earlier (“ROLE: Interior design analyst for empty rooms
 **Render templates**
 
 - 10 styles: **Scandi, Japandi, Modern Minimal, Contemporary Cozy, Mid-Century, Industrial Soft, Boho, Rustic, Mediterranean, Art-Deco**.
-- Base constraints for image-to-image: keep camera pose and room envelope; respect **intervention_scope**; reflect **palette_60_30_10** subtly; avoid logos/text; photorealistic lighting.
+- Base constraints for image-to-image: keep camera pose and room envelope; keep doors, windows, and entries exactly where they appear in the source photo; respect **intervention_scope**; reflect **palette_60_30_10** subtly; avoid logos/text; photorealistic lighting.
 - A/B Mini: vary along `smart_mixed_axes.axisA` vs `axisB` as specified.
 - Hero (3): Smart Mixed (A, B, and best-of-both).
 

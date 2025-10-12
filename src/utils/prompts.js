@@ -152,10 +152,13 @@ function buildGalleryFallback({
   guidanceParts.push(
     'Room structure is fixed; no moving walls, openings, or ceiling lines.'
   );
+  guidanceParts.push(
+    'Doors, windows, and room entries stay exactly where they are in the source photo.'
+  );
 
   const promptLines = [
     `Photorealistic interior render of the provided room styled as ${style}.`,
-    'Maintain the original camera angle, envelope, and proportions. Do not relocate walls, doors, windows, or ceiling heights.',
+    'Maintain the original camera angle, envelope, and proportions. Do not relocate walls, doors, windows, entryways, or ceiling heights.',
   ];
 
   if (architecturalNotes) {

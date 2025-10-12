@@ -62,6 +62,11 @@
 - Added guardrails for constraint rows (add/remove up to five) and wired state updates on input events so iteration prompts reuse the edited text.
 - Extended the layout spec to assert the editable controls render with the generated brief content.
 
+## 2025-10-12 (door & window guardrails)
+
+- Reinforced iteration, gallery, and finalization prompts so doors, windows, and room entries stay fixed to the source photo.
+- Updated prompt unit tests to assert the new guardrail language for future regressions.
+
 ```
 
 ```

@@ -27,6 +27,7 @@ export function buildIterationPrompt({
   return [
     'Use the attached base room photo as fixed camera pose and architectural envelope.',
     'Do not move, resize, or reshape walls, ceilings, openings, or built-ins; the room volume and dimensions are locked to the photo.',
+    'Keep doors, windows, and room entries exactly where they appear in the source photo—no repositioning, resizing, or new penetrations.',
     'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood)—never their room shape, perspective, or architectural layout.',
     'Consider the following guidance:',
     `• Room brief (silent): ${roomBrief || 'None'}`,
@@ -85,6 +86,7 @@ export function buildFinalizationPrompt() {
   return [
     'Use the attached base room photo as fixed camera & envelope and the attached selected child image as strict visual target.',
     'Do not move architectural elements (walls, openings, ceiling heights); treat the room geometry as immutable.',
+    'Keep doors, windows, and room entries in their original locations from the base photo.',
     'Produce ONE faithful high-resolution re-render at 1536×1024 (polish only; no new composition).',
     'Then return ONE short paragraph of Build Notes (5–7 sentences): materials & finishes, palette accents, lighting layers (day/evening), 1–2 dimensional tips in meters, and any “avoid” reminders. Avoid logos/text.',
   ].join(' ');
