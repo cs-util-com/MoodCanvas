@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "npm run format && npm run lint && npm run check:all && npm run test:unit",
+    "build:css": "tailwindcss -i ./src/tailwind.input.pcss -o ./styles/app.css --minify",
     "format": "prettier --write --ignore-unknown --no-error-on-unmatched-pattern \"src\" \"pages\" \"config\" \"docs\" index.html README.md package.json",
     "test:unit": "jest --coverage --config config/jest.config.js",
     "lint": "eslint . --config config/eslint.config.js",
