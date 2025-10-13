@@ -31,13 +31,10 @@ describe('iteration prompts', () => {
     expect(prompt).toContain(
       'Selected favorites (as free-text, raw): Favorite descriptor'
     );
+    expect(prompt).toContain('Diversity hint: slightly warmer palette');
+    expect(prompt).toContain('Keep the existing room geometry unchanged');
     expect(prompt).toContain(
-      'Diversity hint for this image: slightly warmer palette'
-    );
-    expect(prompt).toContain('Do not move, resize, or reshape walls');
-    expect(prompt).toContain('Keep doors, windows, and room entries exactly');
-    expect(prompt).toContain(
-      'transfer only their style (palette, textures, furniture mood, lighting mood)—never their room shape'
+      'transfer only their style (palette, textures, furniture mood, lighting mood) and ignore their layout'
     );
   });
 
@@ -47,7 +44,7 @@ describe('iteration prompts', () => {
     expect(prompt).toContain('Intended use: None');
     expect(prompt).toContain('User’s global guidance for this round: None');
     expect(prompt).toContain('Selected favorites (as free-text, raw): None');
-    expect(prompt).toContain('Diversity hint for this image: None');
+    expect(prompt).toContain('Diversity hint: None');
   });
 
   it('builds a finalization prompt with hi-res guidance', () => {

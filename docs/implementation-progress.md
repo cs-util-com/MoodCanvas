@@ -67,6 +67,11 @@
 - Reinforced iteration, gallery, and finalization prompts so doors, windows, and room entries stay fixed to the source photo.
 - Updated prompt unit tests to assert the new guardrail language for future regressions.
 
+## 2025-10-13 (iteration prompt simplification)
+
+- Simplified the iteration prompt wording to mirror the Iteration 2 spec and cut redundant architectural guardrails.
+- Adjusted iteration prompt unit tests to check the leaner phrasing while keeping geometry preservation coverage.
+
 ```
 
 ```

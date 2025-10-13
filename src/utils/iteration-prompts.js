@@ -25,19 +25,17 @@ export function buildIterationPrompt({
   diversityHint,
 }) {
   return [
-    'Use the attached base room photo as fixed camera pose and architectural envelope.',
-    'Do not move, resize, or reshape walls, ceilings, openings, or built-ins; the room volume and dimensions are locked to the photo.',
-    'Keep doors, windows, and room entries exactly where they appear in the source photo—no repositioning, resizing, or new penetrations.',
-    'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood)—never their room shape, perspective, or architectural layout.',
-    'Consider the following guidance:',
+    'Use the attached base room photo as fixed camera pose and architectural envelope. Keep the existing room geometry unchanged.',
+    'If reference images are attached, transfer only their style (palette, textures, furniture mood, lighting mood) and ignore their layout.',
+    'Guidance for this image:',
     `• Room brief (silent): ${roomBrief || 'None'}`,
     `• Intended use: ${purpose || 'None'}`,
     `• User’s global guidance for this round: ${roundGuidance || 'None'}`,
     `• Selected favorites (as free-text, raw): ${favoritesTextBlock || 'None'}`,
     '',
-    `Diversity hint for this image: ${diversityHint || 'None'}`,
+    `Diversity hint: ${diversityHint || 'None'}`,
     '',
-    'Generate ONE updated interior variant at 1024×682. Preserve perspective, room envelope, and structural boundaries exactly as shown.',
+    'Generate ONE updated interior variant at 1024×682 while keeping the camera angle and room envelope identical to the base photo.',
     'Return ONE image and ONE short free-text paragraph (single paragraph) describing the mood, the key changes vs the base, and 2–3 ideas for the next iteration. Avoid logos/text.',
   ].join('\n');
 }
