@@ -38,9 +38,11 @@ describe('GeminiClient', () => {
       json: jest.fn().mockResolvedValue(mockPayload),
     };
 
-  const fetchImpl = jest.fn(function (url) {
+    const fetchImpl = jest.fn(function (url) {
       capturedThis = this;
-      expect(url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+      expect(url).toContain(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
+      );
       return Promise.resolve(fetchResponse);
     });
 

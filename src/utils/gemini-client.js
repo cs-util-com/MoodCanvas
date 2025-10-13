@@ -29,7 +29,7 @@ export class GeminiClient {
       throw new Error('imageBase64 is required for analysis');
     }
 
-    const response = await this.#request({
+    const json = await this.generateContent({
       model: ANALYSIS_MODEL,
       body: {
         contents: [
@@ -54,8 +54,6 @@ export class GeminiClient {
       timeoutMs,
       signal,
     });
-
-    const json = await response.json();
     return parseAnalysisPayload(json);
   }
 
@@ -74,7 +72,7 @@ export class GeminiClient {
     }
 
     const jobs = Array.from({ length: count }, (_, index) =>
-      this.#request({
+      this.generateContent({
         model: RENDER_MODEL,
         timeoutMs,
         signal,
@@ -94,18 +92,35 @@ export class GeminiClient {
             },
           ],
         },
-      })
-        .then((response) => response.json())
-        .then((payload) => parseRenderPayload(payload))
+      }).then((payload) => parseRenderPayload(payload))
     );
 
     return Promise.all(jobs);
   }
 
+  async generateContent({
+    model,
+    body,
+    timeoutMs = DEFAULT_RENDER_TIMEOUT_MS,
+    signal,
+  }) {
+    if (!model) {
+      throw new Error('model is required');
+    }
+    if (!body) {
+      throw new Error('body is required');
+    }
+    const response = await this.#request({ model, body, timeoutMs, signal });
+    return response.json();
+  }
+
   async #request({ model, body, timeoutMs, signal }) {
     this.#ensureKey();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error('Request timed out')),
+      timeoutMs
+    );
 
     const mergedSignal = signal
       ? mergeAbortSignals(signal, controller.signal)
@@ -122,14 +137,17 @@ export class GeminiClient {
         signal: mergedSignal,
       };
 
-      const response = await Reflect.apply(
-        this.fetchImpl,
-        globalThis,
-        [`${API_ROOT}/${model}`, requestOptions]
-      );
+      const response = await Reflect.apply(this.fetchImpl, globalThis, [
+        `${API_ROOT}/${model}`,
+        requestOptions,
+      ]);
 
       if (!response.ok) {
-        throw buildGeminiError(await safeJson(response), 'Gemini request failed', response.status);
+        throw buildGeminiError(
+          await safeJson(response),
+          'Gemini request failed',
+          response.status
+        );
       }
 
       return response;
@@ -140,7 +158,9 @@ export class GeminiClient {
 
   #ensureKey() {
     if (!this.apiKey) {
-      throw Object.assign(new Error('Gemini API key missing'), { code: 'missing-key' });
+      throw Object.assign(new Error('Gemini API key missing'), {
+        code: 'missing-key',
+      });
     }
   }
 }
@@ -149,7 +169,8 @@ function mergeAbortSignals(a, b) {
   if (!a) return b;
   if (!b) return a;
   const controller = new AbortController();
-  const abort = (event) => controller.abort(event?.target?.reason ?? a.reason ?? b.reason);
+  const abort = (event) =>
+    controller.abort(event?.target?.reason ?? a.reason ?? b.reason);
   a.addEventListener('abort', abort);
   b.addEventListener('abort', abort);
   return controller.signal;

@@ -129,12 +129,19 @@ async function getDb() {
 
 function openDatabase(name, version, { upgrade } = {}) {
   if (!('indexedDB' in window)) {
-    return Promise.reject(new Error('IndexedDB is not available in this environment'));
+    return Promise.reject(
+      new Error('IndexedDB is not available in this environment')
+    );
   }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, version);
     request.onupgradeneeded = (event) => {
-      upgrade?.(request.result, event.oldVersion, event.newVersion, request.transaction);
+      upgrade?.(
+        request.result,
+        event.oldVersion,
+        event.newVersion,
+        request.transaction
+      );
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -151,9 +158,16 @@ function transactionDone(tx) {
 }
 
 async function enforceProjectLimit(db, projectId) {
-  const total = await sumMediaBytes(db, (record) => record.projectId === projectId);
+  const total = await sumMediaBytes(
+    db,
+    (record) => record.projectId === projectId
+  );
   if (total <= PROJECT_LIMIT_BYTES) return;
-  await evictRenders(db, (record) => record.projectId === projectId, total - PROJECT_LIMIT_BYTES);
+  await evictRenders(
+    db,
+    (record) => record.projectId === projectId,
+    total - PROJECT_LIMIT_BYTES
+  );
 }
 
 async function enforceGlobalLimit(db) {
@@ -218,7 +232,10 @@ async function evictRenders(db, predicate, requiredBytes) {
 }
 
 function generateId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
     return crypto.randomUUID();
   }
   return `id-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;

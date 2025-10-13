@@ -50,10 +50,14 @@ export function normalizeRenderGallery(analysis, paletteOverride) {
   if (!analysis) return [];
 
   const existing = Array.isArray(analysis.render_gallery)
-    ? analysis.render_gallery.filter((item) => item && typeof item.style === 'string')
+    ? analysis.render_gallery.filter(
+        (item) => item && typeof item.style === 'string'
+      )
     : [];
   const styleScores = Array.isArray(analysis.styles_top10)
-    ? analysis.styles_top10.filter((item) => item && typeof item.style === 'string')
+    ? analysis.styles_top10.filter(
+        (item) => item && typeof item.style === 'string'
+      )
     : [];
 
   const palette = paletteOverride ?? analysis.palette_60_30_10;
@@ -74,7 +78,9 @@ export function normalizeRenderGallery(analysis, paletteOverride) {
     }
   }
 
-  const styleReason = new Map(styleScores.map((item) => [item.style, item.why]));
+  const styleReason = new Map(
+    styleScores.map((item) => [item.style, item.why])
+  );
   const existingByStyle = new Map(existing.map((item) => [item.style, item]));
   const results = [];
   const used = new Set();
@@ -143,10 +149,16 @@ function buildGalleryFallback({
     );
   }
   guidanceParts.push('Preserve existing architecture and layout.');
+  guidanceParts.push(
+    'Room structure is fixed; no moving walls, openings, or ceiling lines.'
+  );
+  guidanceParts.push(
+    'Doors, windows, and room entries stay exactly where they are in the source photo.'
+  );
 
   const promptLines = [
     `Photorealistic interior render of the provided room styled as ${style}.`,
-    'Maintain the original camera angle, envelope, and proportions.',
+    'Maintain the original camera angle, envelope, and proportions. Do not relocate walls, doors, windows, entryways, or ceiling heights.',
   ];
 
   if (architecturalNotes) {
@@ -163,7 +175,9 @@ function buildGalleryFallback({
   if (limitations?.length) {
     promptLines.push(`Respect constraints: ${limitations.join('; ')}.`);
   }
-  promptLines.push(`Highlight signature ${style} materials, silhouettes, and styling.`);
+  promptLines.push(
+    `Highlight signature ${style} materials, silhouettes, and styling.`
+  );
   if (negativePrompts.length) {
     promptLines.push(`Avoid: ${negativePrompts.join('; ')}.`);
   }
