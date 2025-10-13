@@ -550,7 +550,7 @@ Finalization runs **Hi-Res @ 1536×1024 + Build Notes** with **Compare & Decide*
 > You only need to paste your Gemini API key in the banner once.
 
 !!Important!!
-This demo html page cant be uses as is, e.g. it does not have the js code in separate files but it provides a good start to look at the code and apply it to the current v1. Its design  is also much worse then the current v1 design, there are no tests etc, so only use it to understand the goal of the v2. 
+This demo html page can't be used as is, e.g. it does not have the js code in separate files but it provides a good start to look at the code and apply it to the current v1. Its design is also much worse then the current v1 design, there are no tests etc, so only use it to understand the goal of the v2. 
 
 ---
 
